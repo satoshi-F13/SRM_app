@@ -1,0 +1,7 @@
+"0","library(ggplot2)"
+"0","p1 <- ggplot(mtcars, aes(x = mpg, y = wt)) +"
+"0","  geom_point() +"
+"0","  labs(title = ""Chart 1"")"
+"0",""
+"0","ggsave(filename = ""asset/chart1-1.png"", p1)"
+"2","[38;5;232mSaving 7 x 7 in image[39m"

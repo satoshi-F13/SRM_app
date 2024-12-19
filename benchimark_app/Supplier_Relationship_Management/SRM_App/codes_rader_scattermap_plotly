@@ -1,0 +1,214 @@
+##### ui part
+
+  # Plotly outputs with spacing
+  fluidRow(
+    column(6, 
+           h4("Radar Chart"),
+           plotlyOutput("radarChart")
+    ),
+    column(6, 
+           h4("Scatter Map"),
+           plotlyOutput("scattermap")
+    )
+  ),
+
+
+
+
+
+
+
+####### server part
+
+  # Render Radar Chart
+  output$radarChart <- renderPlotly({
+    
+    df <- val_sup$Data
+    req(nrow(df) > 0)
+    
+    plot <- plot_ly(
+      type = 'scatterpolar',
+      fill = 'toself'
+    )
+    
+    for (i in 1:nrow(df)) {
+      plot <- plot %>%
+        add_trace(
+          r = c(df$Cost[i], df$Quality[i],df$Delivery[i], df$Service[i], df$Technology[i], df$Cost[i]),
+          theta = c('Cost', 'Quality','Delivery' ,'Service', 'Technology', 'Cost'),
+          name = df$Company[i],
+          # Set custom hover text for "r" values (replace "Score" with your desired text)
+          text = paste0("Score: ", c(df$Cost[i], df$Quality[i], df$Delivery[i], df$Service[i], df$Technology[i], df$Cost[i])),
+          # Set hoverinfo to show only "text" for custom labels
+          hoverinfo = "text"
+        )
+    }
+    
+    plot %>%
+      layout(
+        polar = list(
+          radialaxis = list(
+            visible = TRUE,
+            range = c(0, 10)
+          )
+        ),
+        showlegend = TRUE
+      )
+  })
+  
+  # Render Scatter Map
+  output$scattermap <- renderPlotly({
+    # jp_color = c("pink","#79b346","#C0392B", "#3D5A80", "#FFD700","#96695B", "#808000","#4c91eb")
+    df <- val_sup$Data
+    req(nrow(df) > 0)
+    
+    # Define the buyer's location and radius
+    buyer_lon <- 8.634739
+    buyer_lat <- 45.50517
+    radius_50 <- 50  # radius in kilometers
+    radius_150 <- 150  # radius in kilometers
+    radius_300 <- 300  # radius in kilometers
+    
+    # Function to calculate circle points within 50km
+    create_circle50 <- function(lon, lat, radius_km, n_points = 100) {
+      angles <- seq(0, 2 * pi, length.out = n_points)
+      earth_radius <- 6371  # Radius of Earth in kilometers
+      circle_lon50 <- lon + (radius_50 / earth_radius) * (180 / pi) * cos(angles) / cos(lat * pi / 180)
+      circle_lat50 <- lat + (radius_50 / earth_radius) * (180 / pi) * sin(angles)
+      return(data.frame(lon = circle_lon50, lat = circle_lat50))
+    }
+    
+    #    # Function to calculate circle points within 50km
+    create_circle150 <- function(lon, lat, radius_km, n_points = 100) {
+      angles <- seq(0, 2 * pi, length.out = n_points)
+      earth_radius <- 6371  # Radius of Earth in kilometers
+      circle_lon150 <- lon + (radius_150 / earth_radius) * (180 / pi) * cos(angles) / cos(lat * pi / 180)
+      circle_lat150 <- lat + (radius_150 / earth_radius) * (180 / pi) * sin(angles)
+      return(data.frame(lon = circle_lon150, lat = circle_lat150))
+    }
+    
+    # Function to calculate circle points within 50km
+    create_circle300 <- function(lon, lat, radius_km, n_points = 100) {
+      angles <- seq(0, 2 * pi, length.out = n_points)
+      earth_radius <- 6371  # Radius of Earth in kilometers
+      circle_lon300 <- lon + (radius_300 / earth_radius) * (180 / pi) * cos(angles) / cos(lat * pi / 180)
+      circle_lat300 <- lat + (radius_300 / earth_radius) * (180 / pi) * sin(angles)
+      return(data.frame(lon = circle_lon300, lat = circle_lat300))
+    }
+    
+    circle_points <- create_circle50(buyer_lon, buyer_lat, radius_50)
+    circle_points2 <- create_circle150(buyer_lon, buyer_lat, radius_150)
+    circle_points3 <- create_circle300(buyer_lon, buyer_lat, radius_300)
+    
+    plot <- plot_ly(
+        type = 'scattermapbox',
+        mode = 'markers'
+      )
+    
+    # Add supplier markers
+    for (i in 1:nrow(df)) {
+      plot <- plot %>%
+        add_trace(
+          type = 'scattermapbox',
+          mode = 'markers',
+          name = df$Company[i],
+          lon = df$lon[i],
+          lat = df$lat[i],
+          text = paste("Supplier:", df$Company[i], "<br>City:", df$City[i]),
+          hoverinfo = 'text',
+          marker = list(
+            size = 12,  # Increased marker size
+            color = df$Company[i],  # Use unique colors for each company
+            opacity = 0.7,  # Added opacity to ensure visibility
+            line = list(
+              color = 'black',  # Added black border to markers
+              width = 1.5       # Border width
+            )
+          ),
+          showlegend = FALSE  # appliers' markers shows in legend
+          
+        )
+    }
+    
+    # Add buyer marker
+    plot <- plot %>%
+      add_trace(
+        type = 'scattermapbox',
+        mode = 'markers',
+        name = 'buyer',
+        lon = buyer_lon,
+        lat = buyer_lat,
+        text = 'buyer Spa',
+        hoverinfo = 'text',
+        marker = list(
+          size = 15,
+          color = 'green',
+          symbol = 'star',
+          opacity = 0.8,
+          line = list(
+            color = 'black',
+            width = 1.5
+          )
+        ),
+        showlegend = FALSE  # Ensure buyer shows in legend
+      )
+    
+
+    # Add circle layer
+    plot <- plot %>%
+      add_trace(
+        type = 'scattermapbox',
+        mode = 'lines',
+        lon = circle_points$lon,
+        lat = circle_points$lat,
+        fill = 'toself',
+        fillcolor = 'rgba(64, 255, 0, 0.2)',
+        line = list(color = 'rgba(64, 255, 0, 0.2)'),
+        name = "Radius 50km"
+      )
+    # Add circle layer
+    plot <- plot %>%
+      add_trace(
+        type = 'scattermapbox',
+        mode = 'lines',
+        lon = circle_points2$lon,
+        lat = circle_points2$lat,
+        fill = 'toself',
+        fillcolor = 'rgba(255, 255, 0, 0.2)', #yellow with alpha value 0.2
+        line = list(color = 'rgba(255, 255, 0, 0.2)'),
+        name = "Radius 150km"
+      )
+    # Add circle layer
+    plot <- plot %>%
+      add_trace(
+        type = 'scattermapbox',
+        mode = 'lines',
+        lon = circle_points3$lon,
+        lat = circle_points3$lat,
+        fill = 'toself',
+        fillcolor = 'rgba(255, 182, 193, 0.2)', #lightpink with alpha value 0.2
+        line = list(color = 'rgba(255, 182, 193, 0.2)'),
+        name = "Radius 300km"
+      )
+    
+    
+    plot = plot%>%
+      layout(
+        mapbox = list(
+          style = 'open-street-map',
+          zoom = 4.1,
+          center = list(lon = 12.4964, lat = 41.9028)
+        ),
+
+    # Add legend inside the map on the upper right
+      legend = list(
+       x = 1,
+       y = 1,
+       xanchor = 'right',
+       yanchor = 'top',
+       bgcolor = 'rgba(255, 255, 255, 0.7)'  # Optional: semi-transparent white background
+                   )
+            )
+    plot
+  })
+  

@@ -1,0 +1,4 @@
+"0","ggplot(mtcars, aes(x = mpg, y = qsec)) +"
+"0","  geom_line() +"
+"0","  labs(title = ""Chart 3"")"
+"0",""

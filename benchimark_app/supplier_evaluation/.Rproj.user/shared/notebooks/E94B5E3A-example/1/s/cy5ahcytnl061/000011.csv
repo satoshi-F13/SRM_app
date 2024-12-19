@@ -1,0 +1,3 @@
+"0","# Save the map as a PNG"
+"0","ggsave(""location-map.png"", plot = map_plot, width = 8, height = 6)"
+"0",""

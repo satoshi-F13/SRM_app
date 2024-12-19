@@ -1,0 +1,4 @@
+"0","ggplot(mtcars, aes(x = hp, y = drat)) +"
+"0","  geom_smooth() +"
+"0","  labs(title = ""Chart 5"")"
+"0",""

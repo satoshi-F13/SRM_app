@@ -1,0 +1,717 @@
+---
+title: "Suppliers' Benchmark Report"
+format: 
+   typst:
+     template-partials:
+       - typst-show.typ
+       - typst-template.typ
+     filters:
+        - srm.lua
+
+execute: 
+  echo: false
+params:
+    company: "Supplier A"
+
+---
+
+```{r, echo = FALSE}
+#| label: load-packages
+#| output: false
+#| echo: false
+library(dplyr)
+library(tidyr)
+library(flextable)
+library(tidyverse)
+library(plotly)
+library(ggplot2)
+library(GGally)
+library(ggmap)
+library(scales)
+library(extrafont)
+library(viridis)
+library(patchwork)
+library(hrbrthemes)
+library(fmsb)
+library(colormap)
+
+
+# Set font for ggplot
+update_geom_defaults(
+  geom = "text",
+  aes(family = "Verdana")
+)
+
+# Read the data
+df <- read.csv(file = "data/sample_data.csv")
+
+data <- df %>% 
+           filter(Company == "Supplier A") 
+
+# Create a function to categorize suppliers
+categorize_suppliers <- function(data0) {
+  # Calculate a composite score
+  # We'll use a weighted approach
+  data0 %>%
+    mutate(
+      composite_score = 
+        0.25 * Cost + 
+        0.25 * Quality + 
+        0.15 * Delivery + 
+        0.15 * Service + 
+        0.20 * Technology,
+      
+     # Categorize Technology into 3 size levels
+      Technology_Level = cut(
+        Technology, 
+        breaks = c(0, 5, 8, 10),  # Creates 3 groups: Low, Medium, High
+        labels = c("Low", "Medium", "High"),
+        include.lowest = TRUE
+      ),
+      
+      # Categorization logic
+      supplier_group = case_when(
+        # Strategic Partners: High scores across most dimensions
+        Quality >= 8 & Technology >= 8 & Service >= 8 & composite_score >= 7.5 
+        ~ "Strategic",
+        
+        # High-Risk Suppliers: Low overall performance
+        composite_score < 5 
+        ~ "High-Risk",
+        
+        # Cost-Effective Performers: Good cost with decent other metrics
+        Cost <= 5 & Quality >= 7 & Delivery >= 7 
+        ~ "Cost-Effective",
+        
+        # Improvement Candidates: Moderate performance, room to grow
+        TRUE 
+        ~ "Improvement"
+      )
+    )
+}
+
+# Apply categorization
+suppliers_categorized <- categorize_suppliers(df)
+
+company <- "Supplier A"
+```
+
+```{r}
+# Scale the composite score
+df_scaled <- suppliers_categorized %>% 
+  select(Company,composite_score) %>%
+  mutate(value = rescale_max(composite_score, from = c(0, 10), to = c(0,10))) %>% #min as 0 and max as 10.
+  mutate(Company = as.factor(Company)) %>% 
+  select(-composite_score)
+df_scaled
+```
+
+
+
+#### Brand color
+
+
+```{r}
+p_green1 <- "#61A60E"
+p_green2 <- "#002900"
+p_grey1 <-  "#B2B2B2"
+```
+
+
+
+#### Custom Theme
+
+
+```{r}
+theme_srm <- function(){
+  theme_void(base_family = "Verdana")+
+    theme()
+}
+
+# If the font is not imported in Rstudio, do the functions below. 
+#https://stackoverflow.com/questions/34522732/changing-fonts-in-ggplot2
+# library(extrafont)
+# font_import()
+# loadfonts(device = "win")
+
+```
+
+
+
+## Introduction
+
+
+In the dynamic landscape of supply chain management, systematic supplier evaluation is crucial for maintaining competitive advantage and operational excellence. This comprehensive report analyzes **`r params$company`** performance across five critical dimensions: quality, cost, delivery, service, and technology. Utilizing a standardized scoring methodology, each dimension is meticulously assessed on a scale of 1 to 10, culminating in a total potential score of 50 points. By providing a holistic and quantitative assessment, this evaluation offers actionable insights into the supplier's strengths, potential areas of improvement, and overall strategic alignment with our organizational objectives.
+
+
+
+## Location
+
+
+```{r}
+#| label: location
+#| tbl-cap-location: top
+#| tbl-cap: "Supplier's Location" 
+map_plot <- plot_ly(
+  data = data,
+  type = "scattermapbox",
+  lon = ~data$lon,
+  lat = ~data$lat,
+  text = ~ paste("Company:", data$Company, "<br>City:", data$City),
+  mode = "markers",
+  marker = list(size = 10)
+) %>%
+  layout(
+    mapbox = list(
+      style = "open-street-map",
+      zoom = 4.5, # Adjust zoom for better visibility
+      center = list(lon = mean(data$lon), lat = mean(data$lat))
+    ),
+    margin = list(l = 0, r = 0, t = 0, b = 0) # Remove all margins
+  )
+
+map_plot
+
+
+```
+
+```{r warning=FALSE, message=FALSE}
+
+#API Key: 93a24586-34d5-4141-bb44-39d710140b35
+stadia_key <- "93a24586-34d5-4141-bb44-39d710140b35"
+register_stadiamaps(key = stadia_key) 
+
+# Define the map's center and zoom level
+center_lon <- mean(data$lon)
+center_lat <- mean(data$lat)
+zoom_level <- 7
+
+
+# Retrieve OpenStreetMap tiles
+map <- get_stadiamap(
+  bbox = c(left = min(data$lon) - 2, bottom = min(data$lat) - 2, 
+           right = max(data$lon) + 4, top = max(data$lat) + 2),
+  zoom = zoom_level,
+  maptype = "stamen_toner_lite" # Options include "toner", "terrain", etc.
+)
+
+# Plot the map with ggmap and add points
+map_plot <- ggmap(map) +
+  geom_point(
+    data = data,
+    aes(x = lon, y = lat),
+    color = "orange",
+    size = 3
+  ) +
+  geom_text(
+    data = data,
+    aes(x = lon, y = lat, label = Company),
+    vjust = -1,
+    color = "#DA8359",
+    fontface = "bold",
+    size = 4
+  ) +
+  labs(
+    title = "Supplier Locations",
+    # x = "Longitude",
+    # y = "Latitude"
+  ) +
+  theme(
+    plot.margin = margin(0, 0, 0, 0, unit = "cm"),  # Remove all margins
+    panel.spacing = unit(0, "cm"),                 # Remove spacing between panels
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent"),
+    axis.title = element_blank(),                 # Optional: Remove axis titles
+    axis.text = element_blank(),                  # Optional: Remove axis text
+    axis.ticks = element_blank()                  # Optional: Remove axis ticks
+  )
+map_plot
+# Save the map as a PNG
+ggsave("location-map.png", plot = map_plot, width = 8, height = 8)
+
+```
+
+
+
+
+## Analysis
+
+### Comparison Plot
+
+
+
+```{r fig.height = 1, fig.width = 10}
+# It nees to shrink upper white spaces of chart. 
+# Function to create the comparison plot
+comparison_plot <- function(df0, highlight_company, value_type, highlight_color) {
+ plot <-  ggplot(df0, aes(x = value)) +
+    # Light gray vertical lines for all data
+    geom_point(aes(y = 1), shape = 124, size = 4, color = "gray80") +
+    # Darker vertical line for the highlighted company
+    geom_point(
+      data = df0 %>% filter(Company == highlight_company),
+      aes(y = 1),
+      shape = 124,
+      size = 10,
+      color = highlight_color
+    ) +
+ # Horizontal grid line at y = 1
+    geom_hline(yintercept = 1, color = "gray", linetype = "solid") +
+    # Adjustments for minimal appearance
+    theme_srm() +
+    theme(
+      axis.title.x = element_text(size = 80L),
+      axis.title.y = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid.major.x = element_blank(), # Remove x gridlines
+      panel.grid.minor.x = element_blank(), # Remove minor x gridlines
+      panel.grid.minor.y = element_blank(), # Remove minor y gridlines
+      panel.grid.major.y = element_blank(),  # Remove y gridlines except hline
+      plot.margin = margin(t = 2, r = 5, b = 2, l = 5) # Minimize white space
+    ) +
+    scale_y_continuous(
+      expand = c(0, 0), 
+      limits = c(0.95, 1.05) # Shrink the y-axis range
+    ) +
+    # scale_x_continuous(
+    #   limits = c(-0.1, 1),
+    #   expand = c(0, 0)
+    # ) +
+    labs(
+      x = NULL,
+      y = NULL
+    ) +
+    # Move x-axis closer to y=1
+    theme(axis.text.x = element_text(margin = margin(t = 0))) # Adjust x-axis text
+  
+  # Add conditional formatting for x-axis based on value_type
+  if (value_type == "percent") {
+    plot <- plot + 
+      scale_x_continuous(labels = percent_format(accuracy = 1), limits = c(-0.1, 1))+
+      coord_cartesian(xlim = c(-0.05, 1.1),ylim = c(0.99,1.1))
+  } else if (value_type == "number") {
+    plot <- plot + 
+      scale_x_continuous(labels = comma_format(accuracy = 1), limits = c(-0.1, 10.1))+
+      coord_cartesian(xlim = c(-0.5, 10.1),ylim = c(0.99,1.1))
+
+  } else {
+    stop("Invalid value_type. Use 'percent' or 'number'.")
+  }
+  
+ options(repr.plot.width = 5, repr.plot.height =1) 
+
+   # Return the final plot
+  return(plot)
+}
+  
+
+comparison_plot(
+  df0 = df_scaled,
+  highlight_company = "Supplier A",
+  value_type = "number",
+  highlight_color = p_green1
+)
+
+```
+
+
+
+
+
+
+
+### Big Number Plot
+
+
+```{r}
+# Make function
+big_number_plot <- function(
+  value,
+  text,
+  value_color
+){
+  ggplot() + 
+    # Add value
+    geom_text(
+      aes(
+        x= 1.1,
+        y= 1.01,
+        label = value
+        ),
+      color = value_color,
+      fontface = "bold",
+      size = 20,
+      hjust = 0
+    ) +
+    
+    # Add text
+    geom_text(
+      aes(
+        x=1,
+        y=1.165,
+        hjust = "middle",
+        label = str_to_title(text)
+      ),
+      color = "gray70",
+      size = 7, 
+      hjust = 0
+    )+
+    theme_bw()+
+        coord_cartesian(xlim = c(0.99,1.4),ylim = c(0.95, 1.2))
+
+}
+```
+
+```{r fig.height = 2, fig.width = 2.3}
+# example
+big_number_plot(
+  value = "9%",
+  text = "Supplier D ",
+  value_color = p_green1
+)
+```
+
+
+
+
+#### Total Supplier Number
+
+
+
+```{r fig.height = 2, fig.width = 3}
+val_sum_sup <- 
+  suppliers_categorized %>% 
+  nrow()
+
+big_number_plot(
+  value = val_sum_sup,
+  text = "Total Suppliers",
+  value_color = p_green1
+)
+```
+
+
+
+#### Composite Score
+
+
+```{r fig.height = 2, fig.width = 3}
+val_score <- 
+  suppliers_categorized %>% 
+  filter(Company == company) %>% 
+  pull(composite_score)
+
+  big_number_plot(
+    value = val_score,
+    text = "Composite Score",
+    value_color = p_green1
+  )
+
+```
+
+
+
+#### Tech Level
+
+
+```{r fig.height = 2, fig.width = 3}
+val_tec_level <- 
+    suppliers_categorized %>% 
+  filter(Company == company) %>% 
+  pull(Technology_Level)
+
+  big_number_plot(
+    value = val_tec_level,
+    text = "Tech Level",
+    value_color = p_green1
+  )
+```
+
+
+
+
+
+#### Supplier Category
+
+
+```{r fig.height = 2, fig.width = 10}
+
+val_sup_category <- 
+    suppliers_categorized %>% 
+  filter(Company == company) %>% 
+  pull(supplier_group)
+
+  big_number_plot(
+    value = val_sup_category,
+    text = "Supplier Category",
+    value_color = p_green1
+  )
+```
+
+
+
+
+#### Distance from Novara
+
+
+```{r fig.height = 2, fig.width = 5.3}
+
+df_distance <- 
+  suppliers_categorized %>% 
+  filter(Company == company)
+ # Radius of Earth in km
+  R <- 6371 
+  # Coordinates of Novara
+  novara_lon <- 8.6200
+  novara_lat <- 45.4500
+  
+    # Convert degrees to radians
+    to_radians <- function(deg) deg * pi / 180
+    
+    lon1 <- to_radians(novara_lon)
+    lat1 <- to_radians(novara_lat)
+    lon2 <- to_radians(df_distance$lon)
+    lat2 <- to_radians(df_distance$lat)
+    
+    # Haversine formula
+    delta_lon <- lon2 - lon1
+    delta_lat <- lat2 - lat1
+    
+    a <- sin(delta_lat / 2)^2 + cos(lat1) * cos(lat2) * sin(delta_lon / 2)^2
+    c <- 2 * atan2(sqrt(a), sqrt(1 - a))
+    
+    distance <- round(R * c,0)
+    
+      big_number_plot(
+    value = paste(distance, "km"),
+    text = "Distance",
+    value_color = p_green1
+  )
+```
+
+
+
+
+#### Supplier Rank
+
+
+```{r fig.height = 2, fig.width = 6.8}
+val_rank <- 
+suppliers_categorized %>% 
+  arrange(desc(composite_score)) %>% 
+  mutate(rank = row_number()) %>% 
+  filter(Company == company) %>% 
+  pull(rank)
+  
+    big_number_plot(
+    value = paste(val_rank, "/",val_score ),
+    text = "Ranking",
+    value_color = p_green1
+  )
+```
+
+
+
+
+
+### Rader Chart
+
+
+
+```{r}
+#test
+# Create data: note in High school for Jonathan:
+testdf <- as.data.frame(matrix( sample( 2:20 , 10 , replace=T) , ncol=10))
+colnames(testdf) <- c("math" , "english" , "biology" , "music" , "R-coding", "data-viz" , "french" , "physic", "statistic", "sport" )
+ 
+# To use the fmsb package, I have to add 2 lines to the dataframe: the max and min of each topic to show on the plot!
+testdf <- rbind(rep(20,10) , rep(0,10) , testdf)
+ 
+# Check your data, it has to look like this!
+head(testdf)
+
+# The default radar chart 
+# Custom the radarChart !
+radarchart( testdf  , axistype=1 , 
+ 
+    #custom polygon
+    pcol=rgb(0.2,0.5,0.5,0.9) , pfcol=rgb(0.2,0.5,0.5,0.5) , plwd=4 , 
+ 
+    #custom the grid
+    cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5), cglwd=0.8,
+ 
+    #custom labels
+    vlcex=0.8 
+    )
+
+```
+
+```{r}
+# Reshape data into long format
+df_rader <- data %>%
+  select(-c(Company,Date, City, lon, lat)) 
+# To use the fmsb package, I have to add 2 lines to the dataframe: the max and min of each topic to show on the plot!
+df_rader <- rbind(rep(10,5) , rep(0,5) , df_rader)
+
+# Radar Plot
+radarchart(df_rader)
+# Custom the radarChart !
+par(mar=c(0,0,0,0), family = "Verdana")
+rader_plot <- 
+radarchart( df_rader, axistype=1,
+
+  #custom polygon
+  pcol=p_green1 , #Polygon line color
+  pfcol = scales::alpha(p_green1, 0.5) , #Polygon fill color
+  plwd=4 ,                    #Polygon line width
+
+  #custom the grid
+  cglcol="grey",            #color of the net  
+  cglty=6,                  #net line type
+  axislabcol="grey",        # color of axis labels
+  caxislabels=seq(0,10,2.5),  # vector of axis labels to display
+  cglwd=0.8,                # net width
+
+  #custom labels
+  vlcex=0.8                 #  group labels size
+  )
+rader_plot
+
+ggsave(filename = "selected_company_rader.png", plot = radar_plot)
+
+```
+
+```{r}
+#| message: false
+#| label: rader-chart
+#| tbl-cap: "Performance Chart"
+rader_plot <- plot_ly(
+  type = "scatterpolar",
+  fill = "toself"
+) %>%
+  add_trace(
+    r = c(
+      data$Cost, data$Quality, data$Delivery,
+      data$Service, data$Technology, data$Cost
+    ),
+    theta = c("Cost", "Quality", "Delivery", "Service", "Technology", "Cost"),
+    name = data$Company
+  ) %>%
+  layout(
+    polar = list(
+      radialaxis = list(visible = TRUE, range = c(0, 10))
+    ),
+    showlegend = FALSE,
+    margin = list(l = 50, r = 50, t = 50, b = 50), # Adjust margins for centering
+    autosize = TRUE # Ensure chart resizes dynamically
+  )
+
+rader_plot
+```
+
+
+
+
+
+###  Correlation by categorized group
+
+
+```{r}
+
+# Visualization
+# Create a scatter plot with color-coded groups
+company <- "Supplier A"
+
+plot_cat <- ggplot(suppliers_categorized, 
+               aes(x = Cost, y = Quality, 
+                   color = ifelse(Company == company, p_green1, p_grey1),
+                   shape = supplier_group, 
+                   size = Technology_Level)) +
+  geom_point(alpha = 0.7) +
+  scale_color_identity() +  # Use this to apply the specified colors directly
+    scale_shape_manual(values = c(
+    "Strategic Partners" = 16,     # Filled circle
+    "Improvement Candidates" = 17, # Filled triangle
+    "High-Risk Suppliers" = 15,    # Filled square
+    "Cost-Effective Performers" = 18 # Filled diamond
+  )) +
+    scale_size_manual(values = c(
+    "Low" = 3,       # Smallest size
+    "Medium" = 5,    # Medium size
+    "High" = 7       # Largest size
+  )) +
+  # scale_color_manual(values = c(
+  #   "Strategic Partners" = "#2ecc71",
+  #   "Improvement Candidates" = "#f39c12",
+  #   "High-Risk Suppliers" = "#e74c3c",
+  #   "Cost-Effective Performers" = "#3498db"
+  # )) +
+  scale_x_continuous(breaks = seq(1, 10, by = 2), limits = c(1, 10)) +  # Set x-axis breaks every 2
+  scale_y_continuous(breaks = seq(1, 10, by = 2), limits = c(1, 10)) +  # Set y-axis breaks every 2
+  theme_minimal(base_family = "Verdana") +
+  labs(
+    title = paste(company, ""),
+    x = "Cost Score",
+    y = "Quality Score",
+    shape = "Supplier Group",
+    # color = "Supplier Group",
+    size = "Technology Score"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "right"
+  )
+plot_cat
+```
+
+
+
+
+
+
+
+###  Parallel Coordinates Plot
+
+
+```{r}
+#| label: parallel-plot
+#| warning: false
+#| message: false
+
+company <- "Supplier A"
+df2 <- df %>%
+  mutate(highlight = ifelse(Company == company, TRUE, FALSE))
+
+parallel_plot <- df2 %>%
+  select(Company,Cost, Quality, Delivery, Service, Technology) %>%
+  mutate(across(Cost:Technology, as.numeric)) %>% 
+  ggparcoord(
+  columns = 2:6, # Specify columns to plot 
+  groupColumn = "Company",
+  # order = "anyClass",
+  scale = "center",
+  # Normalize data (optional,globalminmax → No scaling,
+  # uniminmax → Standardize to Min = 0 and Max = 1
+  # std → Normalize univariately (substract mean & divide by sd)
+  # center → Standardize and center variables)
+  alphaLines = 1, 
+  showPoints = TRUE # Add points to the lines (optional)
+  
+) +
+  scale_color_manual(
+    values = setNames(c("gray80", p_green1), c("Other", company)),
+    guide = "none" # Hide legend for color
+  ) +
+  labs(
+    title = paste(company, "performance scores by category"),
+    x = "Category",
+    y = "Standardized-Centralized Score"
+  ) +
+  theme_minimal(base_family = "Verdana") +
+  theme(
+    legend.position = "Default"
+  )
+parallel_plot
+```
+

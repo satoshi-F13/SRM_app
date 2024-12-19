@@ -1,0 +1,182 @@
+---
+title: "Quarto with Typst Layout"
+format: 
+   typst:
+     execute:
+        echo: false
+        warning: false
+     template-partials:
+       - typst-show.typ
+       - typst-template.typ
+     filters:
+        - example.lua
+        
+params:
+    company: "SATOM"
+
+---
+
+# Introduction, `r params$company`
+
+This document demonstrates how to create a layout with two columns. The left column includes a paragraph and the first two charts, while the right column includes the remaining three charts.[QUARTO](https://quarto.org/)
+
+
+
+
+
+::: {.discussion}
+
+## Paragraph
+```{r}
+# Combine the parameter and text
+paragraph_text <- paste(
+  params$company,
+  "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+  "Vivamus tincidunt orci at velit cursus, non tempor mi auctor."
+)
+
+# Export to a .txt file
+writeLines(paragraph_text, "paragraph.txt")
+
+```
+
+
+
+
+## Location
+```{r}
+library(ggmap)
+library(dplyr)
+
+#API Key: 93a24586-34d5-4141-bb44-39d710140b35
+stadia_key <- "93a24586-34d5-4141-bb44-39d710140b35"
+register_stadiamaps(key = stadia_key) 
+# Sample data
+data <- data.frame(
+  lon = c(139.6917, 135.5023, 140.7401),
+  lat = c(35.6895, 34.6937, 40.8244),
+  Company = c("Company A", "Company B", "Company C"),
+  City = c("Tokyo", "Osaka", "Sapporo")
+)
+
+# Define the map's center and zoom level
+center_lon <- mean(data$lon)
+center_lat <- mean(data$lat)
+zoom_level <- 5
+
+
+# Retrieve OpenStreetMap tiles
+map <- get_stadiamap(
+  bbox = c(left = min(data$lon) - 1, bottom = min(data$lat) - 1, 
+           right = max(data$lon) + 1, top = max(data$lat) + 1),
+  zoom = zoom_level,
+  maptype = "stamen_toner_lite" # Options include "toner", "terrain", etc.
+)
+
+# Plot the map with ggmap and add points
+map_plot <- ggmap(map) +
+  geom_point(
+    data = data,
+    aes(x = lon, y = lat),
+    color = "red",
+    size = 3
+  ) +
+  geom_text(
+    data = data,
+    aes(x = lon, y = lat, label = Company),
+    vjust = -1,
+    size = 4
+  ) +
+  labs(
+    title = "Supplier Locations",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme_void()
+map_plot
+# Save the map as a PNG
+ggsave("location-map.png", plot = map_plot, width = 8, height = 6)
+
+```
+
+
+
+
+### Chart Table
+
+```{r}
+library(fmsb)
+
+#test
+# Create data: note in High school for Jonathan:
+testdf <- as.data.frame(matrix( sample( 2:20 , 10 , replace=T) , ncol=10))
+colnames(testdf) <- c("math" , "english" , "biology" , "music" , "R-coding", "data-viz" , "french" , "physic", "statistic", "sport" )
+ 
+# To use the fmsb package, I have to add 2 lines to the dataframe: the max and min of each topic to show on the plot!
+testdf <- rbind(rep(20,10) , rep(0,10) , testdf)
+ 
+# Check your data, it has to look like this!
+head(testdf)
+
+# Create the radar chart and save it as a PNG file
+png(filename = "asset/radar_test.png", width = 800, height = 800) # Open PNG device
+radarchart(testdf, axistype=1,
+           # Custom polygon
+           pcol=rgb(0.2,0.5,0.5,0.9), pfcol=rgb(0.2,0.5,0.5,0.5), plwd=4,
+           # Custom the grid
+           cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5), cglwd=0.8,
+           # Custom labels
+           vlcex=0.8)
+dev.off() # Close PNG device
+```
+
+
+```{r chart1, echo=FALSE, fig.path="asset/", fig.name="chart1", fig.ext="png"}
+library(ggplot2)
+p1 <- ggplot(mtcars, aes(x = mpg, y = wt)) +
+  geom_point() +
+  labs(title = "Chart 1")
+
+ggsave(filename = "asset/chart1-1.png", p1)
+```
+
+
+```{r chart2, echo=FALSE, fig.path="asset/", fig.name="chart2", fig.ext="png"}
+
+p2 <- ggplot(mtcars, aes(x = hp, y = qsec)) +
+  geom_point() +
+  labs(title = "Chart 2")
+ggsave(filename = "asset/chart2-1.png", p2)
+
+```
+
+
+
+
+```{r chart3, echo=FALSE, fig.path="asset/", fig.name="chart3", fig.ext="png"}
+p3 <- ggplot(mtcars, aes(x = mpg, y = qsec)) +
+  geom_line() +
+  labs(title = "Chart 3")
+ggsave(filename = "asset/chart3-1.png", p3)
+
+```
+
+
+```{r chart4, echo=FALSE, fig.path="asset/", fig.name="chart4", fig.ext="png"}
+p4 <- ggplot(mtcars, aes(x = wt, y = drat)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Chart 4")
+ggsave(filename = "asset/chart4-1.png", p4)
+
+```
+
+
+```{r chart5, echo=FALSE, fig.path="asset/", fig.name="chart5", fig.ext="png"}
+p5 <- ggplot(mtcars, aes(x = hp, y = drat)) +
+  geom_smooth() +
+  labs(title = "Chart 5")
+ggsave(filename = "asset/chart5-1.png", p5)
+
+```
+
+:::

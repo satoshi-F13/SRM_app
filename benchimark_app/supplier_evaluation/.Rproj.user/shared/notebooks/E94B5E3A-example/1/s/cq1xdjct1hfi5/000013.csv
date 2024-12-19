@@ -1,0 +1,5 @@
+"0",""
+"0","ggplot(mtcars, aes(x = hp, y = qsec)) +"
+"0","  geom_point() +"
+"0","  labs(title = ""Chart 2"")"
+"0",""

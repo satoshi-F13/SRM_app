@@ -1,0 +1,123 @@
+---
+title: "Suppliers' Benchmark Report"
+format: 
+   typst:
+     template-partials:
+       - typst-show.typ
+       - typst-template.typ
+execute: 
+  echo: false
+params:
+    company: null
+    data: null
+---
+
+```{r}
+#| label: load-packages
+#| output: false
+library(dplyr)
+library(tidyr)
+library(flextable)
+library(tidyverse)
+library(plotly)
+library(ggplot2)
+library(GGally)
+```
+
+
+## Introduction
+
+
+In the dynamic landscape of supply chain management, systematic supplier evaluation is crucial for maintaining competitive advantage and operational excellence. This comprehensive report analyzes {{< meta params.company >}}'s performance across five critical dimensions: quality, cost, delivery, service, and technology. Utilizing a standardized scoring methodology, each dimension is meticulously assessed on a scale of 1 to 10, culminating in a total potential score of 50 points. By providing a holistic and quantitative assessment, this evaluation offers actionable insights into the supplier's strengths, potential areas of improvement, and overall strategic alignment with our organizational objectives.
+
+## Location
+```{r}
+plot_ly(
+  data = params$data,
+  type = "scattermapbox",
+  lon = ~params$data$lon,
+  lat = ~params$data$lat,
+  text = ~ paste("Company:", params$data$Company, "<br>City:", params$data$City),
+  mode = "markers",
+  marker = list(size = 10)
+) %>%
+  layout(
+    mapbox = list(
+      style = "open-street-map",
+      zoom = 4.5, # Adjust zoom for better visibility
+      center = list(lon = mean(params$data$lon), lat = mean(params$data$lat))
+    ),
+    margin = list(l = 0, r = 0, t = 0, b = 0) # Remove all margins
+  )
+
+plot
+```
+
+
+## Analysis
+
+### Rader Chart
+
+```{r}
+#|llabel: rader
+#|message: false
+#|tbl-cap: "Performance Chart by 5 factors"
+#|ttbl-cap-location: bottom
+plot <- plot_ly(
+  type = "scatterpolar",
+  fill = "toself"
+) %>%
+  add_trace(
+    r = c(
+      params$data$Cost, params$data$Quality, params$data$Delivery,
+      params$data$Service, params$data$Technology, params$data$Cost
+    ),
+    theta = c("Cost", "Quality", "Delivery", "Service", "Technology", "Cost"),
+    name = params$data$Company
+  ) %>%
+  layout(
+    polar = list(
+      radialaxis = list(visible = TRUE, range = c(0, 10))
+    ),
+    showlegend = FALSE,
+    margin = list(l = 50, r = 50, t = 50, b = 50), # Adjust margins for centering
+    autosize = TRUE # Ensure chart resizes dynamically
+  )
+
+plot
+```
+
+
+
+###  Bubble Chart (Cost vs Quality, size by Total Score)
+```{r}
+bubble_plot <- params$data %>% 
+  ggplot( aes(
+  x = Cost, y = Quality,
+  size = total_score,
+  color = Company
+)) +
+  geom_point(alpha = 0.7) +
+  scale_size_continuous(range = c(3, 10)) +
+  theme_minimal() +
+  labs(
+    title = "Supplier Performance: Cost vs Quality",
+    x = "Cost Score",
+    y = "Quality Score",
+    size = "Total Score"
+  )
+bubble_plot
+```
+
+
+
+## 4. Parallel Coordinates Plot
+```{r}
+parallel_plot <- params$data %>%
+  select(Cost, Quality, Delivery, Service, Technology) %>%
+  ggparcoord(
+    alphaLines = 0.3,
+    title = "Parallel Coordinates: Supplier Performance Dimensions"
+  )
+parallel_plot
+```

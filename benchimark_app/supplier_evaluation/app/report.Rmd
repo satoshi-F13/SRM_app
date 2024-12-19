@@ -1,0 +1,53 @@
+---
+title: "Supplier Benchmark Report"
+date: "`r params$date`"
+output: 
+  pagedown::html_paged:
+    css: ["default-fonts", "default"]
+    format: "A3"
+    orientation: "portrait"
+params:
+  data: NULL
+  date: NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(plotly)
+library(knitr)
+```
+
+## Overview
+
+This report provides a comprehensive analysis of supplier performance metrics.
+
+### Top Performers
+
+```{r}
+params$data %>%
+  mutate(total_score = Cost + Quality + Delivery + Service + Technology) %>%
+  arrange(desc(total_score)) %>%
+  select(Company, Cost, Quality, Delivery, Service, Technology, total_score) %>%
+  head(5) %>%
+  kable()
+```
+
+### Performance Metrics
+
+```{r, fig.height=8, fig.width=10}
+plot_ly(type = 'scatterpolar', fill = 'toself') %>%
+  add_trace(
+    r = c(mean(params$data$Cost), mean(params$data$Quality),
+          mean(params$data$Delivery), mean(params$data$Service),
+          mean(params$data$Technology), mean(params$data$Cost)),
+    theta = c('Cost', 'Quality', 'Delivery', 'Service', 'Technology', 'Cost'),
+    name = 'Average Performance'
+  )
+```
+
+### Complete Data
+
+```{r}
+kable(params$data)
+```

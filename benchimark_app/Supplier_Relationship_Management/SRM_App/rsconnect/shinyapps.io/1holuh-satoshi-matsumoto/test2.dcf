@@ -1,0 +1,13 @@
+name: test2
+title: test2
+username: 1holuh-satoshi-matsumoto
+account: 1holuh-satoshi-matsumoto
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 13473584
+bundleId: 9431476
+url: https://satomou.shinyapps.io/test2/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: codes_rader_scattermap_plotly|copyapp.28.11.2024
