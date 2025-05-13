@@ -14,6 +14,7 @@ library(plotly)
 library(readr)
 library(dplyr)
 library(ggmap)
+library(rsconnect)
 
 # Read the city data ####
 it_city <- read_csv(file = "data/it.csv")
