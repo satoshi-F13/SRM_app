@@ -1,0 +1,421 @@
+---
+title: "Event Evaluation Report"
+format: 
+  typst:
+    template-partials:
+      - typst-show.typ
+      - typst-template.typ
+execute: 
+  echo: false
+params:
+  location: '`r params$location`'
+  expo_name: '`r params$expo_name`'
+  year: '`r params$year`' 
+  expo_name_year: '`r params$expo_name_year`'
+  value_score: '`r params$value_score`'
+  relevance_category: '`r params$relevance_category`'
+  award_status: '`r params$award_status`'
+  new_followers: '`r params$new_followers`'
+  website_growth: '`r params$website_growth`'
+  total_opps: '`r params$total_opps`'
+  engagement_rate: '`r params$engagement_rate`'
+  total_participation_cost: '`r params$total_participation_cost`'
+  roi_percentage: '`r params$roi_percentage`'
+  net_value: '`r params$net_value`'
+  cost_per_opp: '`r params$cost_per_opp`'
+  network_insight: '`r params$network_insight`'
+  impression_rate: '`r params$impression_rate`'
+  conversion_followers: '`r params$conversion_followers`'
+  effectiveness: '`r params$effectiveness`'
+  relevance_performance: '`r params$relevance_performance`'
+  about_expo: '`r params$about_expo`'
+  strategy: '`r params$strategy`'
+  conclusion: '`r params$conclusion`'
+  notes: '`r params$notes`'
+  df_all: NULL
+  df_selected: NULL
+---
+
+
+```{r}
+# library
+library(dplyr)
+library(readr)
+library(tidyr)
+library(flextable)
+library(tidyverse)
+library(ggrepel)
+library(ggplot2)
+library(GGally)
+library(ggmap)
+library(scales)
+library(extrafont)
+library(viridis)
+library(patchwork)
+library(hrbrthemes)
+library(fmsb)
+library(colormap)
+```
+
+
+# Database
+```{r}
+# df_all <- readRDS(file = "expo_data.rds")
+df <- readRDS(params$df_selected)
+df_all <- readRDS(params$df_all)
+```
+
+
+
+# Performance Overview
+```{r}
+#| label: Performance Overview
+
+
+# visitor funnel chart
+data <- 
+  df
+  # df_all%>%
+  # filter(
+  #   expo_name == "test3",
+  #   year == '2021'
+  #   )
+
+    # Create data for horizontal bar chart
+    categories <- c(
+      "Industry Relevance", "Networking Value", "Digital Impact",
+      "Award Recognition", "Cost Efficiency", "Overall Score"
+    )
+    
+    # Calculate normalized values for each category (0-10 scale)
+    relevance_score <- data$relevance
+    
+    networking_value <- min(10, (data$networking_events +
+                                   data$presentation_opportunities * 2 +
+                                   data$meeting_opportunities * 0.5) / 5)
+    
+    digital_impact <- min(10, (data$linkedin_posts * 0.5 +
+                                 (data$post_reactions / max(1, data$post_views)) * 100 +
+                                 data$new_followers / 10) / 5)
+    
+    award_recognition <- min(10, data$awards * 8 + ifelse(data$award_celebration, 2, 0))
+    
+    total_cost <- data$participation_fees + data$networking_fees + data$ad_fee + data$gadget_costs
+    total_opps <- data$networking_events + data$presentation_opportunities + data$meeting_opportunities
+    cost_efficiency <- ifelse(total_cost > 0 && total_opps > 0,
+                              min(10, 10 * (1 - (total_cost / total_opps) / 1000)), 0
+    )
+    
+    overall_score <- min(10, data$value_score / 10)
+    
+    # Combine values
+    values <- c(
+      relevance_score, networking_value, digital_impact,
+      award_recognition, cost_efficiency, overall_score
+    )
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      category = factor(categories, levels = rev(categories)), # Reverse order for better display
+      value = values
+    )
+    
+    # Add color column based on values
+    plot_data$color <- sapply(plot_data$value, function(v) {
+      if (v >= 7) return("#61A60E") # Green for high values
+      if (v >= 4) return("#7AB8D7") # Blue for medium values
+      return("#B2B2B2") # Grey for low values
+    })
+    
+    # Create horizontal bar chart
+    bar_performance <- 
+    ggplot(plot_data, aes(x = value, y = category)) +
+      geom_bar(stat = "identity", aes(fill = color)) +
+      scale_fill_identity() +  # Use the actual colors specified in the data
+      geom_text(aes(label = round(value, 1)), hjust = -0.2) +
+      scale_x_continuous(limits = c(0, 11), breaks = 0:10) + # Add space for labels
+      theme_minimal() +
+      theme(
+        legend.position = "none",
+        panel.grid.major.y = element_blank(),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, face = "bold"),
+        axis.text.x = element_text(size = 12)
+      ) +
+      labs(
+        # title = paste0("Marketing Performance Overview: ", data$expo_name, " (", data$year, ")"),
+        x = "Score (0-10)",
+        y = NULL
+      )
+    
+ggsave(
+  filename = "assets/bar_performance.png",
+  plot = bar_performance,
+  width = 8, # Width in inches
+  height = 3, # Height in inches
+  dpi = 150, # Resolution (dots per inch)
+  create.dir = FALSE
+)
+```
+
+
+# Digital Engagement Funnel
+```{r}
+#| label: Digital Engagement Funnel
+
+    # Create data for funnel chart
+    stages <- c("Website Visitors", "Post Views", "Post Reactions", "New Followers")
+    values <- c(data$website_visitors, data$post_views, data$post_reactions, data$new_followers)
+
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      stage = factor(stages, levels = rev(stages)),
+      value = values
+    )
+
+    # Create horizontal bar chart for funnel visualization
+    bar_funnel <- 
+    ggplot(plot_data, aes(x = stage, y = value)) +
+      geom_bar(stat = "identity", fill = "#61A60E", width = 0.6) +
+      geom_text(aes(label = value), hjust = -0.2, colour = "#61A60E", size = 8) +
+      coord_flip() +
+      scale_y_continuous(limits = c(0, max(values) * 1.2)) +
+      theme_minimal() +
+      labs(
+        # title = "Digital Engagement Funnel",
+        x = NULL,
+        y = "Count"
+      )+
+      theme(
+        axis.title.x = element_blank(),
+        axis.text = element_text(size = 14),
+        panel.grid.major.y = element_blank(),
+      )
+
+bar_funnel
+ggsave(
+  filename = "assets/bar_funnel.png",
+  plot = bar_funnel,
+  width = 8, # Width in inches
+  height = 3, # Height in inches
+  dpi = 150 # Resolution (dots per inch)
+)
+```
+
+
+
+
+# Cost Breakdown
+```{r}
+    # Create data for cost breakdown
+    categories <- c("Participation", "Networking", "Advertisement", "Gadgets")
+    values <- c(data$participation_fees, data$networking_fees, data$ad_fee, data$gadget_costs)
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      category = factor(categories, levels = categories),
+      cost = values
+    )
+    
+    # Calculate total cost and ROI
+    total_cost <- sum(values)
+    total_opps <- data$networking_events + data$presentation_opportunities + data$meeting_opportunities
+    cost_per_opp <- ifelse(total_opps > 0, total_cost / total_opps, 0)
+    
+    # Calculate percentages for labeling
+    plot_data <- plot_data %>%
+      mutate(
+        percent = cost / sum(cost) * 100,
+        label = paste0(category, "\n", "€", format(cost, big.mark = ","), "\n", "(", round(percent, 1), "%)")
+      ) %>% 
+      arrange(cost)
+    # Create ordered factor with levels in the arranged order
+    plot_data$category <- factor(plot_data$category, levels = rev(plot_data$category))
+    # Get category order after arrangement to correctly map colors
+    ordered_categories <- levels(plot_data$category)
+    # Custom color palette from provided colors
+    prcs_colors <- c(
+      "#61A60E", "#7C563A", "#B2B2B2", "#7AB8D7"
+    )
+    
+    # # Find the indices of the top two cost categories
+    # top_indices <- order(plot_data$cost, decreasing = TRUE)[1:2]
+    # Create stacked bar chart
+    cost_chart <- 
+      ggplot(plot_data, aes(x = "", y = cost, fill = category)) +
+      geom_bar(stat = "identity", width = 0.4) +
+      geom_label_repel(
+        # data = plot_data[top_indices, ],  # Only use data for top two categories
+        aes(label = paste0(category, "\n€", format(cost, big.mark = ","), "\n", round(percent, 1), "%")),
+        # position = position_stack(vjust = 0.5),
+        color = "#fff",
+        fontface = "bold",
+        size = 5,
+        lineheight = 0.8,  # Controls spacing between lines in multi-line text
+        force = 40,          # Increase force to push labels apart
+        direction = "x",  # Allow movement directions in x, y, both
+        nudge_x = 0.9,
+        nudge_y = -1,
+        box.padding = 1.5,   # Add more padding around the labels
+        point.padding = 0.5, # Space between the bar and starting position of label
+        max.overlaps = 20,    # Allow more overlaps to be resolved
+        segment.color = NA   # Add this to change the line color as NA
+
+      ) +
+      scale_fill_manual(values = prcs_colors[match(ordered_categories, categories)]) +
+      # Expand the plot area to accommodate labels
+      scale_y_continuous(
+        expand = expansion(mult = c(0, 0.1)), 
+        labels = scales::label_dollar(prefix = "€", suffix = "", scale_cut = c(K = 1e3, M = 1e6))
+      )+
+      theme_minimal() +
+      theme(legend.position = "none",
+            axis.text = element_text(size = 14),
+            
+            ) +
+      labs(
+        # title = "Cost Breakdown",
+        subtitle = paste0(
+          "Total Cost: €", format(total_cost, big.mark = ",")
+        ),
+        y = NULL, 
+        x = NULL
+      ) +
+      coord_flip()
+    
+    cost_chart
+# Save the plot with correct dimensions
+ggsave(
+  filename = "assets/cost_chart.png",
+  plot = cost_chart,
+  width = 8,
+  height = 3,
+  dpi = 150
+)
+```
+
+
+
+
+# Network & Media Value
+```{r}
+    # Create data for comparison
+    categories <- c("Networking\nEvents", "Presentations", "Meetings", "LinkedIn\nPosts", "Post\nReactions")
+    values <- c(
+      data$networking_events, data$presentation_opportunities,
+      data$meeting_opportunities, data$linkedin_posts, data$post_reactions
+    )
+
+    types <- c(rep("Networking", 3), rep("Digital", 2))
+
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      category = factor(categories, levels = categories),
+      value = values,
+      type = factor(types)
+    )
+
+    # Create grouped bar chart
+    network_media_plot <- 
+    ggplot(plot_data, aes(x = category, y = value, fill = type)) +
+      geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+      scale_fill_manual(values = c("Networking" = "#61A60E", "Digital" = "#B2B2B2")) +
+      theme_minimal() +
+      labs(
+        # title = "Network & Media Value Comparison",
+        x = NULL,
+        y = "Count",
+        fill = "Type"
+      ) +
+      # Fix the text label display
+      geom_text(aes(label = value, color = type), 
+                vjust = -0.5, 
+                position = position_dodge(width = 0.7), 
+                size = 5) +  # Reduced text size to prevent overlap
+      # Add color scale for text that matches the fill colors
+      scale_color_manual(values = c("Networking" = "#61A60E", "Digital" = "#B2B2B2")) +
+      theme(
+        axis.text = element_text(size = 10),
+        axis.title = element_blank(),
+        # Hide the color legend as it duplicates the fill legend
+        legend.position = "none",
+        # Make sure the plot has enough room at the top for labels
+        plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+      ) +
+      # Ensure y-axis extends high enough for the labels
+      coord_cartesian(clip = "off")  # Prevent clipping of labe
+network_media_plot
+ggsave(
+  filename = "assets/network_media_plot.png",
+  plot = network_media_plot,
+  width = 8, # Width in inches
+  height = 3, # Height in inches
+  dpi = 150 # Resolution (dots per inch)
+)
+```
+
+
+
+
+<!-- # Advertisement Location Impact -->
+<!-- ```{r} -->
+<!-- # We cannot estimate the web views from the information. It is not suitable factors. -->
+<!--     # Check if ad_locations_types is empty -->
+<!--     if (data$ad_locations_types == "" || data$ad_locations == 0) { -->
+<!--       # Return empty plot with message -->
+<!--       return( -->
+<!--         ggplot() + -->
+<!--           annotate("text", x = 0.5, y = 0.5, label = "No advertisement locations data available") + -->
+<!--           theme_void() + -->
+<!--           xlim(0, 1) + -->
+<!--           ylim(0, 1) -->
+<!--       ) -->
+<!--     } -->
+
+<!--     # Parse ad location types -->
+<!--     ad_types <- unlist(strsplit(data$ad_locations_types, ", ")) -->
+
+<!--     # Create simulated impact data (since actual impact data isn't available) -->
+<!--     # We'll use some basic assumptions about location effectiveness -->
+<!--     location_effectiveness <- data.frame( -->
+<!--       location = c("Corridor", "Entrance", "Seminar Room", "Digital Screen", "Other"), -->
+<!--       impact_factor = c(0.7, 1.0, 0.8, 0.9, 0.5) -->
+<!--     ) -->
+
+<!--     # Filter to only include the types we have -->
+<!--     plot_data <- location_effectiveness[location_effectiveness$location %in% ad_types, ] -->
+
+<!--     # Adjust impact by simulating views based on factors -->
+<!--     plot_data$estimated_views <- round(data$website_visitors * plot_data$impact_factor) -->
+
+<!--     # Create horizontal bar chart -->
+<!--     ad_impact_chart <-  -->
+<!--     ggplot(plot_data, aes(y = reorder(location, impact_factor), x = estimated_views)) + -->
+<!--       geom_bar(stat = "identity", fill = "#61A60E") + -->
+<!--       theme_minimal() + -->
+<!--       labs( -->
+<!--         # title = "Estimated Impact by Advertisement Location", -->
+<!--         # subtitle = "Based on location effectiveness factors", -->
+<!--         y = "Location Type", -->
+<!--         x = "Estimated Web-Views" -->
+<!--       ) + -->
+<!--       geom_text(aes(label = estimated_views), hjust = -0.2, size = 5, colour = "#61A60E") + -->
+<!--       theme( -->
+<!--         axis.title.y = element_blank(), -->
+<!--         axis.text = element_text(size = 10), -->
+<!--         panel.grid.major.y = element_blank(), -->
+<!--               ) + -->
+<!--       # Ensure x-axis extends far enough for the labels -->
+<!--       scale_x_continuous(expand = expansion(mult = c(0, 0.15))) -->
+<!--     ad_impact_chart -->
+
+<!--     ggsave( -->
+<!--   filename = "assets/ad_impact_chart.png", -->
+<!--   plot = ad_impact_chart, -->
+<!--   width = 8, # Width in inches -->
+<!--   height = 3, # Height in inches -->
+<!--   dpi = 150 # Resolution (dots per inch) -->
+<!-- ) -->
+<!-- ``` -->
+

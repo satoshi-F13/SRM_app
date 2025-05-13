@@ -30,18 +30,20 @@
               company)),
       ),
     ),
-    footer: align(
-      grid(
-        columns: (40%, 60%),
-        align(horizon,
-              text(fill: rgb("51B464"),
-              size: 12pt,
-              counter(page).display("1"))),
-        align(right,
-              image("asset/sample_logo.png",
-              height: 50%)),
-      )
-    )
+footer: align(
+  grid(
+    columns: (40%, 60%),
+    align(horizon,
+          context {
+            text(fill: rgb("51B464"),
+                 size: 12pt,
+                 counter(page).display("1"))
+          }),
+    align(right,
+          image("asset/sample_logo.png",
+                height: 50%)),
+  )
+)
   )
 
 // Configure headings.

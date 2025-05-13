@@ -62,7 +62,7 @@ theme_srm <- function() {
 
 
 ```{r}
-#| label:function
+
 
 # Big Number Plot Function
 big_number_plot <- function(

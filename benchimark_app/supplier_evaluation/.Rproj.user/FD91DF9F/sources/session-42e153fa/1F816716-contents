@@ -43,13 +43,13 @@ ui <- fluidPage(
     sidebar = sidebar(
       title = "Controls",
       fileInput(
-        inputId = "upload_csv",
-        label = "Upload Supplier Data (CSV)",
-        accept = c(".csv"),
-        multiple = FALSE,
-        width = "100%",
-        buttonLabel = "Browse...",
-        placeholder = "No file selected"
+        inputId = "upload_csv",          # Unique ID to reference this input
+        label = "Upload Supplier Data (CSV)", # Display label
+        accept = c(".csv"),              # Restricts to CSV files only
+        multiple = FALSE,                # Only allows single file selection
+        width = "100%",                  # Takes full width of container
+        buttonLabel = "Browse...",       # Text on the browse button
+        placeholder = "No file selected" # Default text when no file is selected
       ),
       selectInput(
         inputId = "Company",
