@@ -8,10 +8,10 @@
     size: 12pt,
   )
   set page(
-    "a3",
+    "a4",
     margin: (left: 1in, right: 1in, top: 0.7in, bottom: 1in),
     background: place(top, 
-                      rect(fill: rgb("51B464"),
+                      rect(fill: rgb("#61A60E"),
                       width: 100%,
                       height: 0.5in)),
     header: align(
@@ -35,7 +35,7 @@ footer: align(
     columns: (40%, 60%),
     align(horizon,
           context {
-            text(fill: rgb("51B464"),
+            text(fill: rgb("#002900"),
                  size: 12pt,
                  counter(page).display("1"))
           }),
@@ -81,6 +81,8 @@ footer: align(
     )
     // Place a single line
      box(width: 1fr, line(length: 100%, stroke: luma(180)))  
+   
+   
      
  //  Key Findings 2   
      grid(
@@ -100,12 +102,14 @@ footer: align(
     )
     // Place a single line
      box(width: 1fr, line(length: 100%, stroke: luma(180)))  
+     
+    pagebreak()
 // Key Findings 3    
     grid(
       columns: (130pt,1fr,1fr, 1fr),
       rows: (100pt,100pt),
       gutter: 15pt,
-      grid.cell(colspan: 1,align: center + horizon, text(size: 20pt, fill:green ,"Overview")),
+      grid.cell(colspan: 1,align: center + horizon, text(size: 20pt, fill:rgb("#002900") ,"Overview")),
       grid.cell(
         colspan: 1,
         align: horizon,
@@ -121,7 +125,7 @@ footer: align(
       align: horizon,
       image("asset/distance_plot.png"),
               ),
-      grid.cell(colspan: 1,align: center + horizon, text(size: 20pt, fill:green ,"Category")),
+      grid.cell(colspan: 1,align: center + horizon, text(size: 20pt, fill:rgb("#002900") ,"Category")),
       grid.cell(
       colspan: 2,
       align: horizon,

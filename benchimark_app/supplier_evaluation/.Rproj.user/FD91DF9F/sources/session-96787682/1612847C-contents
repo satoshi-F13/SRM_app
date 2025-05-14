@@ -1,0 +1,2164 @@
+library(shiny)
+library(shinydashboard)
+library(shinyWidgets)
+library(shinyBS)
+library(bslib)
+library(DT)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(dplyr)
+library(readr)
+library(ggrepel)
+library(viridis)
+library(RColorBrewer)
+library(plotly)
+library(ggfittext)
+library(stringr)
+library(gridExtra)
+library(grid)
+library(reshape2)
+library(shinyjs)
+library(emayili)
+library(RSQLite)
+library(shinyauthr) # Changed from login to shinyauthr
+
+# Define APP_ID globally (no longer needed with shinyauthr but keeping for reference)
+APP_ID <- 'expo_analyzer_app'
+
+# Setup SQLite database for session management
+db_path <- "users.sqlite"
+if (!file.exists(db_path)) {
+  db <- dbConnect(SQLite(), db_path)
+  dbCreateTable(db, "sessionids", c(user = "TEXT", sessionid = "TEXT", login_time = "TEXT"))
+  # Create a user table if it doesn't exist
+  dbCreateTable(db, "users", c(
+    user = "TEXT", 
+    password = "TEXT",
+    first_name = "TEXT",
+    last_name = "TEXT"
+  ))
+  # Add some sample users
+  sample_users <- data.frame(
+    user = c("admin@example.com", "user@example.com"),
+    password = c("password123", "password456"),
+    first_name = c("Admin", "Test"),
+    last_name = c("User", "User")
+  )
+  dbWriteTable(db, "users", sample_users, append = TRUE)
+  dbDisconnect(db)
+}
+
+# Define session ID management functions
+cookie_expiry <- 30 # Days until session expires (matching original app)
+
+# Add session ID to database
+add_sessionid_to_db <- function(user, sessionid) {
+  db <- dbConnect(SQLite(), db_path)
+  on.exit(dbDisconnect(db))
+  
+  # Check if the sessionids table exists, if not create it
+  if (!dbExistsTable(db, "sessionids")) {
+    dbCreateTable(db, "sessionids", c(
+      user = "TEXT",
+      sessionid = "TEXT",
+      login_time = "TEXT"
+    ))
+  }
+  
+  tibble(
+    user = user, 
+    sessionid = sessionid, 
+    login_time = as.character(Sys.time())
+  ) %>%
+    dbWriteTable(db, "sessionids", ., append = TRUE)
+  
+  return(TRUE)  # Must return TRUE to indicate success
+}
+
+# Get session IDs from database
+get_sessionids_from_db <- function() {
+  db <- dbConnect(SQLite(), db_path)
+  on.exit(dbDisconnect(db))
+  
+  # Return empty tibble if table doesn't exist
+  if (!dbExistsTable(db, "sessionids")) {
+    return(tibble(user = character(), sessionid = character(), login_time = character()))
+  }
+  
+  # Read the table and filter to active sessions
+  result <- dbReadTable(db, "sessionids") %>%
+    as_tibble() %>%
+    mutate(login_time = as.POSIXct(login_time, format = "%Y-%m-%d %H:%M:%S")) %>%
+    filter(login_time > Sys.time() - 60*60*24*cookie_expiry) # Filter to active sessions
+  
+  return(result)
+}
+
+# Get user base from database
+get_user_base <- function() {
+  db <- dbConnect(SQLite(), db_path)
+  on.exit(dbDisconnect(db))
+  
+  dbReadTable(db, "users") %>%
+    as_tibble()
+}
+
+# Define UI with login integration
+ui <- fluidPage(
+  useShinyjs(),
+  # Load required CSS
+  tags$head(
+    tags$style(HTML("
+      .auth-modal-prompt {text-align: center;}
+      .auth-modal-title {margin-bottom: 15px;}
+      .shinyauthr-input-panel {max-width: 350px; margin: 0 auto;}
+      .recalculating {opacity: 1.0;}
+    "))
+  ),
+  # Main application UI
+  uiOutput("app_ui")
+)
+
+# Define server logic
+server <- function(input, output, session) {
+  
+  # Reactive expression to check if user is logged in
+  app_accessible <- reactive({
+    return(rv$user_auth)
+  })
+  
+  # Add at the beginning of your server function
+  options(shiny.sanitize.errors = FALSE)  # Show full error messages
+  
+  # Handle login manually instead of using loginServer
+  rv <- reactiveValues(
+    user_auth = FALSE,
+    user = NULL,
+    info = NULL,
+    failed = FALSE
+  )
+  
+  # Display error message when login fails
+  output$error_message <- renderUI({
+    if(rv$failed) {
+      div(style = "color: red; text-align: center; margin-top: 10px;",
+          "Invalid username or password!")
+    }
+  })
+  
+  # Handle login button click
+  observeEvent(input$login_button, {
+    # Get user input
+    user_attempt <- input$user
+    pass_attempt <- input$pass
+    
+    # Reset failed state
+    rv$failed <- FALSE
+    
+    # Check credentials against user_base
+    match_row <- which(user_base$user == user_attempt & user_base$password == pass_attempt)
+    
+    if(length(match_row) == 1) {
+      # Login success
+      rv$user_auth <- TRUE
+      rv$user <- user_attempt
+      rv$info <- user_base[match_row, ]
+      
+      # Set a cookie if needed
+      sessionid <- digest::digest(paste0(user_attempt, Sys.time(), runif(1)))
+      add_sessionid_to_db(user_attempt, sessionid)
+      
+      # Clear password field
+      updateTextInput(session, "pass", value = "")
+    } else {
+      # Login failed
+      rv$failed <- TRUE
+      rv$user_auth <- FALSE
+      
+      # Clear password field
+      updateTextInput(session, "pass", value = "")
+    }
+  })
+  
+  # Create a credentials reactive to match the shinyauthr pattern
+  credentials <- reactive({
+    list(
+      user_auth = rv$user_auth,
+      user = rv$user,
+      info = rv$info
+    )
+  })
+  
+  # Handle logout
+  observeEvent(input$logout, {
+    rv$user_auth <- FALSE
+    rv$user <- NULL
+    rv$info <- NULL
+  })
+  
+  # Create static user base for authentication
+  user_base <- tibble::tibble(
+    user = c("c.rossa", "user2"),
+    password = c("honda11", "pass2"),
+    permissions = c("standard", "admin"),
+    name = c("User One", "User Two")
+  )
+  
+  # Load the csv file at server initialization
+  cities <- tryCatch({
+    readr::read_csv("data/cities.csv", show_col_types = FALSE)
+  }, error = function(e) {
+    warning(paste("Error loading cities.csv:", e$message))
+    data.frame(city = c("Berlin", "London", "Paris", "Madrid", "Rome"))
+  })
+  
+  # Initialize city choices ONLY after user is logged in
+  observe({
+    # First check if the user is logged in
+    req(app_accessible())
+    
+    # Then update the selectInput
+    updateSelectInput(session, "location", choices = cities$city, selected = "Milan")
+  })
+  
+  # Render app UI based on login status
+  output$app_ui <- renderUI({
+    if(app_accessible()) {
+      # The full dashboard UI when logged in
+      dashboardPage(
+        skin = "green",
+        dashboardHeader(
+          title = "Event Evaluation",
+          # Add logout button in the header
+          tags$li(
+            class = "dropdown",
+            style = "padding: 8px;",
+            actionButton("logout", "Log Out", icon = icon("sign-out-alt"),
+                         style = "background-color: #d9534f; color: white;")
+          )
+        ),
+        dashboardSidebar(
+          sidebarMenu(
+            menuItem("Data Entry", tabName = "data", icon = icon("table")),
+            menuItem("Analysis", tabName = "analysis", icon = icon("file-contract")),
+            menuItem("Comparison", tabName = "comparison", icon = icon("chart-simple")),
+            menuItem("Settings", tabName = "settings", icon = icon("cog"))
+          )
+        ),
+        dashboardBody(
+          includeCSS("www/custom.css"),
+          tabItems(
+            # Data Entry Tab
+            tabItem(
+              tabName = "data",
+              fluidRow(
+                box(
+                  title = "Event Details", width = 12, status = "primary",
+                  height = "auto", # Auto height to accommodate all content
+                  
+                  fluidRow(
+                    column(3, textInput("expo_name", "Event Name", "")),
+                    column(3, numericInput("year", "Year", value = as.numeric(format(Sys.Date(), "%Y")))),
+                    column(3, selectInput(
+                      inputId = "location",  # Make sure this is exactly "location"
+                      label = "Select a City:",
+                      choices = cities$city, # Will be populated from server
+                      selected = "Milan", 
+                      multiple = FALSE
+                    )),
+                  ),
+                  fluidRow(
+                    column(
+                      4,
+                      tags$div(
+                        style = "width: 100%; margin-bottom: 30px;", # Added bottom margin for labels
+                        
+                        tags$style(HTML("
+            .custom-slider-labels {position: relative; height: 20px;}
+            .custom-slider-labels .label-left {position: absolute; left: 0; bottom: -20px;}
+            .custom-slider-labels .label-middle {position: absolute; left: 50%; transform: translateX(-50%); bottom: -20px;}
+            .custom-slider-labels .label-right {position: absolute; right: 0; bottom: -20px;}
+      
+                  /* Hide the default numeric labels */
+            .custom-slider-labels .irs-min,
+            .custom-slider-labels .irs-max,
+            .custom-slider-labels .irs-single {
+              display: none !important;
+            }
+            
+          ")),
+                        tags$div(
+                          class = "custom-slider-labels",
+                          style = "width: 100%;", # Ensure this div takes full width
+                          sliderInput("relevance",
+                                      "Industry Relevance",
+                                      min = 1,
+                                      max = 10,
+                                      value = 5,
+                                      ticks = FALSE, # Hide the default ticks
+                                      step = 1,
+                                      width = "100%" # Set the slider width to 100%
+                                      
+                          ),
+                          tags$div(class = "label-left", "SEED"),
+                          tags$div(class = "label-middle", "GROW"),
+                          tags$div(class = "label-right", "FLORA"),
+                          div(
+                            style = "position: absolute; top: 0; right: 0px;",
+                            tipify(icon("info-circle"),
+                                   title = "Rate the relevance of this EXPO to your industry sector",
+                                   placement = "right"
+                            )
+                          )
+                        )
+                      )
+                    ),
+                    column(3, checkboxInput("award_celebration", "Award Celebration Event", value = FALSE))
+                  )
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "Networking & Exposing Opportunities", width = 12, status = "primary",
+                  fluidRow(
+                    column(4, numericInput("networking_events", "Networking Events", value = 0, min = 0, step = 1)),
+                    column(4, numericInput("presentation_opportunities", "Presentation Opportunities", value = 0, min = 0, step = 1)),
+                    column(4, 
+                           div(
+                             style = "display: flex; align-items: center;",
+                             numericInput("meeting_opportunities", "Meeting Opportunities", value = 0, min = 0, step = 1),
+                             tipify(icon("info-circle"),
+                                    title = "Estimated value:300EUR/meeting",
+                                    placement = "top"
+                             ))),
+                    column(4,
+                           div(
+                             style = "display: flex; align-items: center;",
+                             numericInput("awards", "Number of Received Awards", value = 0, min = 0, step = 1),
+                             tipify(icon("info-circle"),
+                                    title = "Estimated value:100K EUR/award",
+                                    placement = "top"
+                             ))),
+                    column(4, numericInput("gadgets_provided", "Number of Gadgets Provided", value = 0, min = 0, step = 10))
+                  )
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "Advertisement & Costs", width = 12, status = "primary",
+                  fluidRow(
+                    column(3, numericInput("ad_fee", "Advertisement Fee (€)", value = 0, min = 0, step = 100)),
+                    column(3, numericInput("ad_locations", "Number of Ad. Locations", value = 0, min = 0, step = 1)),
+                    column(3, selectizeInput("ad_locations_types", "Ad. Location Types", 
+                                             choices = c("Corridor", "Entrance", "Seminar Room", "Digital Screen", "Other"),
+                                             multiple = TRUE)),
+                  ),
+                  fluidRow(
+                    column(3, numericInput("participation_fees", "Participation Fees (€)", value = 0, min = 0, step = 100)),
+                    column(3, numericInput("networking_fees", "Networking Event (€)", value = 0, min = 0, step = 100)),
+                    column(3, numericInput("gadget_costs", "Gadget Costs (€)", value = 0, min = 0, step = 10)),
+                  )
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "Digital Marketing Metrics", width = 12, status = "primary",
+                  fluidRow(
+                    column(3, numericInput("website_visitors", "Website Visitors During Event", value = 0, min = 0, step = 1)),
+                    column(3, numericInput("website_visitors_before", "Website Visitors 2 Weeks Before", value = 0, min = 0, step = 1)),
+                    column(3, numericInput("linkedin_posts", "LinkedIn Posts About Event", value = 0, min = 0, step = 1)),
+                    column(3, numericInput("post_views", "LinkedIn Post Views", value = 0, min = 0, step = 1))
+                  ),
+                  fluidRow(
+                    column(3, numericInput("post_reactions", "LinkedIn Post Reactions", value = 0, min = 0, step = 1)),
+                    column(3, 
+                           div(
+                             style = "display: flex; align-items: center;",
+                             numericInput("new_followers", "New LinkedIn Followers", value = 0, min = 0, step = 1),
+                             tipify(icon("info-circle"),
+                                    title = "Estimated value:50EUR/follower",
+                                    placement = "top"
+                             )
+                           )
+                    ),
+                    column(3, numericInput("hashtag_reach", "Hashtag Reach", value = 0, min = 0, step = 1)),
+                    column(3, 
+                           div(
+                             style = "display: flex; align-items: center;",
+                             numericInput("impression_rate", "Impression Rate (%)", value = 0, min = 0, max = 100, step = 0.1),
+                             tipify(icon("info-circle"),
+                                    title = "Calculated as: (Reactions/Views) × 100",
+                                    placement = "right"
+                             )
+                           )
+                    )
+                  )
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "Event Evaluation", width = 12, status = "primary",
+                  tabBox(
+                    width = 12,
+                    tabPanel(
+                      title = "About Event",
+                      textAreaInput("about",
+                                    label = NULL,
+                                    placeholder = "Enter the information about the event by up to 40 words",
+                                    height = "100px", width = "100%"
+                      )
+                    ),
+                    tabPanel(
+                      title = "Strategy",
+                      textAreaInput("strategy",
+                                    label = NULL,
+                                    placeholder = "Describe your digital marketing strategy for this event in up to 50 words",
+                                    height = "100px", width = "100%"
+                      )
+                    ),
+                    tabPanel(
+                      title = "Conclusion",
+                      textAreaInput("conclusion",
+                                    label = NULL,
+                                    placeholder = "Conclude the marketing performance during the event...",
+                                    height = "100px", width = "100%"
+                      )
+                    ),
+                    tabPanel(
+                      title = "Additional Notes",
+                      textAreaInput("notes",
+                                    label = NULL,
+                                    placeholder = "Enter the remarkable notes, such as improvement points, competitor presense...",
+                                    height = "100px", width = "100%"
+                      )
+                    )
+                  ),
+                  fluidRow(
+                  ),
+                  actionButton("add_expo", "Add Event", icon = icon("plus")),
+                  actionButton("clear_form", "Clear Form", icon = icon("eraser"))
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "Event Database", width = 12, status = "info",
+                  DTOutput("expo_table"),
+                  fluidRow(
+                    column(3, actionButton("delete_selected", "Delete Selected", icon = icon("trash"))),
+                    column(3, actionButton("edit_selected", "Edit Selected", icon = icon("edit"))),
+                    column(3, downloadButton("download_csv", "Download CSV")),
+                    column(3, actionButton("save_data", "Save Current Data", icon = icon("save")))
+                  )
+                )
+              )
+            ),
+            
+            # Analysis Tab
+            tabItem(
+              tabName = "analysis",
+              fluidRow(
+                box(
+                  title = "Marketing Analysis & Report", width = 12, status = "primary",
+                  fluidRow(
+                    column(4, selectInput("expo_analysis", "Select Event for Analysis:", choices = NULL))
+                  ),
+                  downloadButton("generatePDF", "Generate PDF",
+                                 style = paste0("background-color: ", "#002900", "; color: white;")
+                  )
+                )
+              ),
+              fluidRow(
+                infoBoxOutput("website_growth_box", width = 4),
+                infoBoxOutput("post_engagement_box", width = 4),
+                infoBoxOutput("follower_gain_box", width = 4),
+              ),
+              fluidRow(
+                infoBoxOutput("award_gain_box", width = 4),
+                infoBoxOutput("meeting_opps_box", width = 4),
+                infoBoxOutput("cost_efficiency_box", width = 4)
+              ),
+              
+              fluidRow(
+                tabBox(
+                  width = 12,
+                  tabPanel(
+                    title = "Marketing Performance",
+                    status = "primary",
+                    solidHeader = TRUE,
+                    plotOutput("marketing_overview", height = "300px")
+                  ),
+                  tabPanel(
+                    title = "Digital Engagement",
+                    status = "primary",
+                    solidHeader = TRUE,
+                    plotOutput("digital_funnel", height = "300px")
+                  ),
+                  tabPanel(
+                    title = "Cost Breakdown",
+                    status = "primary",
+                    solidHeader = TRUE,
+                    plotOutput("cost_analysis_plot", height = "300px")
+                  ),
+                  tabPanel(
+                    title = "Network & Media Value",
+                    status = "primary",
+                    solidHeader = TRUE,
+                    plotOutput("network_media_plot", height = "300px")
+                  )
+                )
+              )
+            ),
+            
+            # Comparison Tab
+            tabItem(
+              tabName = "comparison",
+              fluidRow(
+                box(
+                  title = "Event Comparison Settings", width = 12, status = "primary",
+                  fluidRow(
+                    column(4, selectizeInput("select_expos", "Select Events to Compare",
+                                             choices = NULL, multiple = TRUE
+                    )),
+                    column(4, selectInput("comparison_metric", "Primary Comparison Metric",
+                                          choices = c(
+                                            "Website Visitors" = "website_visitors",
+                                            "Website Growth (%)" = "website_growth",
+                                            "LinkedIn Posts" = "linkedin_posts",
+                                            "Post Views" = "post_views",
+                                            "Post Reactions" = "post_reactions",
+                                            "Impression Rate" = "impression_rate",
+                                            "New Followers" = "new_followers",
+                                            "Hashtag Reach" = "hashtag_reach",
+                                            "Networking Events" = "networking_events",
+                                            "Meeting Opportunities" = "meeting_opportunities",
+                                            "Advertisement Locations" = "ad_locations",
+                                            "Total Cost" = "total_cost",
+                                            "Gadgets Provided" = "gadgets_provided",
+                                            "Overall Value Score" = "value_score",
+                                            "Industry Relevance" = "relevance",
+                                            "Exhibiting Frequency" = "times"
+                                          )
+                    )),
+                    column(4, selectInput("chart_type", "Chart Type",
+                                          choices = c("Bar Chart", "Radar Chart")
+                    ))
+                  ),
+                  actionButton("generate_comparison", "Generate Comparison", icon = icon("chart-line"))
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "Comparison Results", width = 12, status = "info",
+                  plotOutput("comparison_plot", height = "500px"),
+                  DTOutput("comparison_table")
+                )
+              )
+            ),
+            
+            # Settings Tab
+            tabItem(
+              tabName = "settings",
+              fluidRow(
+                box(
+                  title = "Data Management", width = 12, status = "warning",
+                  fileInput("load_rds", "Load Saved Data (RDS file)", accept = ".rds"),
+                  actionButton("clear_all_data", "Clear All Data", icon = icon("exclamation-triangle")),
+                  hr(),
+                  textInput("data_file_name", "Data File Name for Saving", value = "event_marketing_data"),
+                  actionButton("backup_data", "Create Backup", icon = icon("cloud-upload"))
+                ),
+              )
+            )
+          )
+        )
+      )
+    } else {
+      # Login page when not logged in
+      fluidPage(
+        tags$style(HTML("
+          .login-panel {
+            max-width: 600px;
+            margin: 100px auto;
+            text-align: center;
+            background-color: #f8f8f8;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+          }
+          .login-panel h2 {
+            color: #61A60E;
+            margin-bottom: 20px;
+          }
+          .auth-modal-login {
+            width: 100%;
+            max-width: 300px;
+            margin: 0 auto;
+          }
+        ")),
+        
+        div(class = "login-panel",
+            # Logo and header
+            tags$h2("Welcome to Event Evaluation for Marketing"),
+            tags$p("Please log in to access the application", 
+                   style = "font-size: 16px; margin-bottom: 30px;"),
+            tags$img(src = "https://img.icons8.com/color/96/000000/conference.png", 
+                     style = "margin-bottom: 20px;"),
+            
+            # Basic login UI with more direct HTML control
+            div(
+              style = "max-width: 300px; margin: 0 auto;",
+              textInput("user", "Username"),
+              passwordInput("pass", "Password"),
+              div(style = "text-align: center; margin-top: 10px;",
+                  actionButton("login_button", "Log In", 
+                               style = "background-color: #61A60E; color: white; width: 100%;")
+              ),
+              div(
+                style = "text-align: center; margin-top: 15px;",
+                tags$p("", 
+                       style = "font-size: 12px; color: #666;")
+              ),
+              # Error message display
+              uiOutput("error_message")
+            ),
+            
+            tags$p("Need help? Contact the administrator.",
+                   style = "font-size: 14px; color: #666; margin-top: 20px;")
+        )
+      )
+    }
+  })
+  
+  # Add this to the top of your server function
+  observe({
+    # Check for quarto - safer version
+    quarto_exists <- tryCatch({
+      suppressWarnings(system2("quarto", "--version", stdout = TRUE, stderr = FALSE))
+    }, error = function(e) {
+      character(0)  # Return empty character vector on error
+    })
+    # Safe check that won't produce NA in if statement
+    if (length(quarto_exists) == 0) {
+      warning("Quarto not found on system path, PDF generation may fail")
+    } else {
+      message("Quarto found: ", paste(quarto_exists, collapse = " "))
+    }
+  })
+  
+  
+  # ==== DATA ENTRY FUNCTIO====
+  # Modified city loading code for the login-enabled version
+  # Place this in your server function
+  
+  # Load the csv file at server initialization
+  cities <- tryCatch({
+    readr::read_csv("data/cities.csv", show_col_types = FALSE)
+  }, error = function(e) {
+    warning(paste("Error loading cities.csv:", e$message))
+    data.frame(city = c("Berlin", "London", "Paris", "Madrid", "Rome"))
+  })
+  
+  # Initialize city choices ONLY after user is logged in
+  observe({
+    # First check if the user is logged in
+    req(app_accessible())
+    
+    # Then update the selectInput
+    updateSelectInput(session, "location", choices = cities$city, selected = "Milan")
+  })
+  
+  # Reactive expression to get the selected cities
+  selected_city <- reactive({
+    req(input$location)  # Make sure location exists
+    input$location
+  })
+  # For tracking editing mode
+  editing_mode <- reactiveVal(FALSE)
+  selected_row <- reactiveVal(NULL)
+  
+  # Define the path for saving data
+  data_file_path <- reactive({
+    paste0(input$data_file_name, ".rds")
+  })
+  
+  # Initialize the expo_data reactive values
+  expo_data <- reactiveVal(data.frame(
+    expo_name = character(),
+    year = numeric(),
+    location = character(),
+    relevance = numeric(),
+    award_celebration = logical(),
+    networking_events = numeric(),
+    presentation_opportunities = numeric(),
+    meeting_opportunities = numeric(),
+    awards = numeric(),
+    gadgets_provided = numeric(),
+    ad_fee = numeric(),
+    ad_locations = numeric(),
+    ad_locations_types = character(),
+    participation_fees = numeric(),
+    networking_fees = numeric(),
+    gadget_costs = numeric(),
+    website_visitors = numeric(),
+    website_visitors_before = numeric(),
+    linkedin_posts = numeric(),
+    post_views = numeric(),
+    post_reactions = numeric(),
+    new_followers = numeric(),
+    hashtag_reach = numeric(),
+    impression_rate = numeric(),
+    about = character(),
+    strategy = character(),
+    conclusion = character(),
+    notes = character(),
+    value_score = numeric(),
+    stringsAsFactors = FALSE
+  ))
+  
+  # Try to load existing data if available
+  observe({
+    if (file.exists("expo_data.rds")) {
+      expo_data(readRDS("expo_data.rds"))
+    }
+  })
+  
+  # Function to calculate the value score
+  calculate_value_score <- function() {
+    # Base score starts with industry relevance (1-10 scale, scale to 0-20)
+    base_score <- input$relevance * 2
+    
+    # Add points for networking opportunities (1 per event, max 20)
+    network_score <- min(20, input$networking_events)
+    
+    # Add points for presentation opportunities (2 per presentation, max 20)
+    present_score <- min(20, input$presentation_opportunities * 2)
+    
+    # Add points for meeting opportunities (0.5 per meeting, max 15)
+    meeting_score <- min(15, input$meeting_opportunities * 0.5)
+    
+    # Add points for awards (15 per single award, max 15)
+    awards_score <- min(15, input$awards * 15)
+    
+    # Add bonus if it's an award celebration event
+    award_celebration_bonus <- ifelse(input$award_celebration, 5, 0)
+    
+    # Calculate social media impact (max 15)
+    social_impact <- 0
+    if (input$post_views > 0) {
+      # Calculate engagement rate (reactions/views)
+      engagement_rate <- input$post_reactions / input$post_views
+      social_impact <- min(15, engagement_rate * 10) # Scale up for significance
+    }
+    
+    # Calculate cost efficiency (networking opportunities / total cost, max 15)
+    total_cost <- input$participation_fees + input$networking_fees +
+      input$ad_fee + input$gadget_costs
+    
+    cost_efficiency <- 0
+    if (total_cost > 0) {
+      opportunities <- input$networking_events + input$presentation_opportunities +
+        input$meeting_opportunities
+      cost_efficiency <- min(15, (opportunities / (total_cost / 1000)) * 5)
+    }
+    
+    # Calculate total value score
+    value_score <- base_score + network_score + present_score + meeting_score +
+      awards_score + award_celebration_bonus + social_impact +
+      cost_efficiency
+    
+    # Cap the maximum score at 100
+    return(min(100, round(value_score)))
+  }
+  
+  # Add Event to Database
+  observeEvent(input$add_expo, {
+    if (input$expo_name == "") {
+      showModal(modalDialog(
+        title = "Error",
+        "Event name cannot be empty!",
+        easyClose = TRUE
+      ))
+      return(NULL)
+    }
+    
+    # Calculate value score
+    value_score <- calculate_value_score()
+    
+    # Create a new row with all the input values
+    new_expo <- data.frame(
+      expo_name = input$expo_name,
+      year = input$year,
+      location = input$location,
+      relevance = input$relevance,
+      award_celebration = input$award_celebration,
+      networking_events = input$networking_events,
+      presentation_opportunities = input$presentation_opportunities,
+      meeting_opportunities = input$meeting_opportunities,
+      awards = input$awards,
+      gadgets_provided = input$gadgets_provided,
+      ad_fee = input$ad_fee,
+      ad_locations = input$ad_locations,
+      ad_locations_types = paste(input$ad_locations_types, collapse = ", "),
+      participation_fees = input$participation_fees,
+      networking_fees = input$networking_fees,
+      gadget_costs = input$gadget_costs,
+      website_visitors = input$website_visitors,
+      website_visitors_before = input$website_visitors_before,
+      linkedin_posts = input$linkedin_posts,
+      post_views = input$post_views,
+      post_reactions = input$post_reactions,
+      new_followers = input$new_followers,
+      hashtag_reach = input$hashtag_reach,
+      impression_rate = input$impression_rate,
+      about = input$about,
+      strategy = input$strategy,
+      conclusion = input$conclusion,
+      notes = input$notes,
+      value_score = value_score,
+      stringsAsFactors = FALSE
+    )
+    
+    # If in editing mode, update the selected row
+    if (editing_mode()) {
+      current_data <- expo_data()
+      current_data[selected_row(), ] <- new_expo
+      expo_data(current_data)
+      editing_mode(FALSE)
+      selected_row(NULL)
+      showNotification("Event updated successfully!", type = "message")
+    } else {
+      # Add the new row to the existing data
+      expo_data(rbind(expo_data(), new_expo))
+      showNotification("Event added successfully!", type = "message")
+    }
+    
+    # Clear the form after adding
+    updateActionButton(session, "add_expo", label = "Add Event")
+  })
+  
+  # Clear form on the input values
+  observeEvent(input$clear_form, {
+    # Reset all input fields to their default values
+    updateTextInput(session, "expo_name", value = "")
+    updateNumericInput(session, "year", value = as.numeric(format(Sys.Date(), "%Y")))
+    updateSelectInput(session, "location", selected = NULL)
+    updateSliderInput(session, "relevance", value = 5)
+    updateCheckboxInput(session, "award_celebration", value = FALSE)
+    updateNumericInput(session, "networking_events", value = 0)
+    updateNumericInput(session, "presentation_opportunities", value = 0)
+    updateNumericInput(session, "meeting_opportunities", value = 0)
+    updateNumericInput(session, "awards", value = 0)
+    updateNumericInput(session, "gadgets_provided", value = 0)
+    updateNumericInput(session, "ad_fee", value = 0)
+    updateNumericInput(session, "ad_locations", value = 0)
+    updateSelectizeInput(session, "ad_locations_types", selected = NULL)
+    updateNumericInput(session, "participation_fees", value = 0)
+    updateNumericInput(session, "networking_fees", value = 0)
+    updateNumericInput(session, "gadget_costs", value = 0)
+    updateNumericInput(session, "website_visitors", value = 0)
+    updateNumericInput(session, "website_visitors_before", value = 0)
+    updateNumericInput(session, "linkedin_posts", value = 0)
+    updateNumericInput(session, "post_views", value = 0)
+    updateNumericInput(session, "post_reactions", value = 0)
+    updateNumericInput(session, "new_followers", value = 0)
+    updateNumericInput(session, "hashtag_reach", value = 0)
+    updateNumericInput(session, "impression_rate", value = 0)
+    updateTextAreaInput(session, "about", value = "")
+    updateTextAreaInput(session, "strategy", value = "")
+    updateTextAreaInput(session, "conclusion", value = "")
+    updateTextAreaInput(session, "notes", value = "")
+    
+    # Reset editing mode if active
+    if (editing_mode()) {
+      editing_mode(FALSE)
+      selected_row(NULL)
+      updateActionButton(session, "add_expo", label = "Add Event")
+    }
+    
+    showNotification("Form cleared!", type = "message")
+  })
+  
+  # Render the data table
+  output$expo_table <- renderDT({
+    expo_table <- expo_data() %>%
+      select(!c(about, strategy, conclusion, notes))
+    datatable(expo_table,
+              options = list(
+                pageLength = 10,
+                lengthMenu = c(5, 10, 15, 20),
+                scrollX = TRUE
+              ),
+              selection = "single"
+    )
+  })
+  
+  # Handle delete selected
+  observeEvent(input$delete_selected, {
+    if (is.null(input$expo_table_rows_selected)) {
+      showNotification("Please select a row to delete", type = "warning")
+      return(NULL)
+    }
+    
+    # Show confirmation modal
+    showModal(modalDialog(
+      title = "Confirm Delete",
+      "Are you sure you want to delete this event?",
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_delete", "Delete", class = "btn-danger")
+      ),
+      easyClose = TRUE
+    ))
+  })
+  
+  # Handle the confirmed delete
+  observeEvent(input$confirm_delete, {
+    current_data <- expo_data()
+    current_data <- current_data[-input$expo_table_rows_selected, ]
+    expo_data(current_data)
+    removeModal()
+    showNotification("Event deleted successfully!", type = "message")
+  })
+  
+  # Handle edit selected
+  observeEvent(input$edit_selected, {
+    if (is.null(input$expo_table_rows_selected)) {
+      showNotification("Please select a row to edit", type = "warning")
+      return(NULL)
+    }
+    
+    # Set editing mode and store selected row index
+    editing_mode(TRUE)
+    selected_row(input$expo_table_rows_selected)
+    
+    # Get the data from the selected row
+    row_data <- expo_data()[input$expo_table_rows_selected, ]
+    
+    # Fill the form with the selected data
+    updateTextInput(session, "expo_name", value = row_data$expo_name)
+    updateNumericInput(session, "year", value = row_data$year)
+    updateSelectInput(session, "location", selected = row_data$location)
+    updateSliderInput(session, "relevance", value = row_data$relevance)
+    updateCheckboxInput(session, "award_celebration", value = row_data$award_celebration)
+    updateNumericInput(session, "networking_events", value = row_data$networking_events)
+    updateNumericInput(session, "presentation_opportunities", value = row_data$presentation_opportunities)
+    updateNumericInput(session, "meeting_opportunities", value = row_data$meeting_opportunities)
+    updateNumericInput(session, "awards", value = row_data$awards)
+    updateNumericInput(session, "gadgets_provided", value = row_data$gadgets_provided)
+    updateNumericInput(session, "ad_fee", value = row_data$ad_fee)
+    updateNumericInput(session, "ad_locations", value = row_data$ad_locations)
+    
+    # Handle the ad_locations_types which is stored as a comma-separated string
+    ad_location_types_list <- unlist(strsplit(row_data$ad_locations_types, ", "))
+    updateSelectizeInput(session, "ad_locations_types", selected = ad_location_types_list)
+    
+    updateNumericInput(session, "participation_fees", value = row_data$participation_fees)
+    updateNumericInput(session, "networking_fees", value = row_data$networking_fees)
+    updateNumericInput(session, "gadget_costs", value = row_data$gadget_costs)
+    updateNumericInput(session, "website_visitors", value = row_data$website_visitors)
+    updateNumericInput(session, "website_visitors_before", value = row_data$website_visitors_before)
+    updateNumericInput(session, "linkedin_posts", value = row_data$linkedin_posts)
+    updateNumericInput(session, "post_views", value = row_data$post_views)
+    updateNumericInput(session, "post_reactions", value = row_data$post_reactions)
+    updateNumericInput(session, "new_followers", value = row_data$new_followers)
+    updateNumericInput(session, "hashtag_reach", value = row_data$hashtag_reach)
+    updateNumericInput(session, "impression_rate", value = row_data$impression_rate)
+    updateTextAreaInput(session, "about", value = row_data$about)
+    updateTextAreaInput(session, "strategy", value = row_data$strategy)
+    updateTextAreaInput(session, "conclusion", value = row_data$conclusion)
+    updateTextAreaInput(session, "notes", value = row_data$notes)
+    
+    # Change the add button to update
+    updateActionButton(session, "add_expo", label = "Update Event")
+    
+    showNotification("Editing event. Click 'Update Event' to save changes.", type = "message")
+  })
+  
+  # Download as CSV
+  output$download_csv <- downloadHandler(
+    filename = function() {
+      paste("expo_data_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      write.csv(expo_data(), file, row.names = FALSE)
+    }
+  )
+  
+  # Save data
+  observeEvent(input$save_data, {
+    saveRDS(expo_data(), "expo_data.rds")
+    showNotification("Data saved successfully!", type = "message")
+  })
+  
+  # Calculate and display impression rate automatically when post views change
+  observeEvent(input$post_views, {
+    if (input$post_views > 0 && input$post_reactions > 0) {
+      impression_rate <- (input$post_reactions / input$post_views) * 100
+      updateNumericInput(session, "impression_rate", value = round(impression_rate, 1))
+    }
+  })
+  
+  # Update impression rate when post reactions change
+  observeEvent(input$post_reactions, {
+    if (input$post_views > 0 && input$post_reactions > 0) {
+      impression_rate <- (input$post_reactions / input$post_views) * 100
+      updateNumericInput(session, "impression_rate", value = round(impression_rate, 1))
+    }
+  })
+  
+  # === ANALYSIS FUNCTION ====
+  # Update the analysis dropdown with available expos
+  # Update the analysis dropdown with available expos
+  observe({
+    # Only run this observer when the user is logged in and expo_data exists
+    req(app_accessible())
+    req(expo_data())
+    req(nrow(expo_data()) > 0)
+    
+    updateSelectInput(session, "expo_analysis",
+                      choices = setNames(
+                        1:nrow(expo_data()),
+                        paste0(expo_data()$expo_name, " (", expo_data()$year, ")")
+                      )
+    )
+  })
+  
+  # Reactive expression to get the selected expo for analysis
+  selected_expo <- reactive({
+    # First check if user is logged in and data exists
+    req(app_accessible())
+    req(expo_data())
+    req(input$expo_analysis)
+    
+    # Make sure the input value is valid 
+    selected_index <- as.numeric(input$expo_analysis)
+    req(selected_index <= nrow(expo_data()))
+    
+    # Return the selected row
+    expo_data()[selected_index, ]
+  })
+  
+  
+  # Website Growth Box
+  output$website_growth_box <- renderInfoBox({
+    req(selected_expo())
+    
+    expo <- selected_expo()
+    
+    # Calculate website growth percentage
+    growth_pct <- ifelse(
+      expo$website_visitors_before > 0,
+      ((expo$website_visitors - expo$website_visitors_before) / expo$website_visitors_before) * 100,
+      0
+    )
+    
+    # Format the value and determine color
+    value_text <- paste0(round(growth_pct, 1), "%")
+    color <- ifelse(growth_pct >= 0, "green", "red")
+    
+    infoBox(
+      "Website Growth",
+      value_text,
+      subtitle = paste0("From ", expo$website_visitors_before, " to ", expo$website_visitors),
+      icon = icon("chart-line"),
+      color = color
+    )
+  })
+  
+  # Post Engagement Box
+  output$post_engagement_box <- renderInfoBox({
+    req(selected_expo())
+    
+    expo <- selected_expo()
+    
+    # Calculate engagement rate
+    engagement_rate <- ifelse(
+      expo$post_views > 0,
+      (expo$post_reactions / expo$post_views) * 100,
+      0
+    )
+    
+    # Determine color based on engagement rate
+    color <- case_when(
+      engagement_rate >= 3 ~ "green",
+      engagement_rate >= 1 ~ "yellow",
+      TRUE ~ "red"
+    )
+    
+    infoBox(
+      "Engagement",
+      paste0(round(engagement_rate, 1), "%"),
+      subtitle = HTML(expo$post_reactions, " reactions<br>", expo$post_views, " views"),
+      icon = icon("thumbs-up"),
+      color = color
+    )
+  })
+  
+  # Follower Gain Box
+  output$follower_gain_box <- renderInfoBox({
+    req(selected_expo())
+    
+    expo <- selected_expo()
+    
+    # Determine color based on follower gains
+    color <- case_when(
+      expo$new_followers >= 50 ~ "green",
+      expo$new_followers >= 10 ~ "yellow",
+      TRUE ~ "red"
+    )
+    
+    infoBox(
+      "New Followers",
+      expo$new_followers,
+      subtitle = "LinkedIn followers gained",
+      icon = icon("users"),
+      color = color
+    )
+  })
+  
+  
+  
+  # Award Gain Box
+  output$award_gain_box <- renderInfoBox({
+    req(selected_expo())
+    expo <- selected_expo()
+    
+    # Determine color based on awards received
+    color <- case_when(
+      expo$awards >= 1 ~ "green",
+      TRUE ~ "yellow"
+    )
+    
+    infoBox(
+      "Award",
+      expo$awards,
+      subtitle = ifelse(expo$awards, "Award gained!", "Regular event"),
+      icon = icon("trophy"),
+      color = color
+    )
+  })
+  
+  # Meeting Opportunities Box
+  output$meeting_opps_box <- renderInfoBox({
+    req(selected_expo())
+    
+    expo <- selected_expo()
+    
+    # Total networking opportunities
+    total_opps <- expo$networking_events + expo$presentation_opportunities + expo$meeting_opportunities
+    
+    # Determine color based on total opportunities
+    color <- case_when(
+      total_opps >= 10 ~ "green",
+      total_opps >= 5 ~ "yellow",
+      TRUE ~ "red"
+    )
+    
+    infoBox(
+      "Opportunities",
+      total_opps,
+      subtitle = HTML(
+        expo$networking_events, " networking(s),<br> ",
+        expo$presentation_opportunities, " presentations,<br> ",
+        expo$meeting_opportunities, " meetings"
+      ),
+      icon = icon("handshake"),
+      color = color
+    )
+  })
+  
+  # ==== Digital Amplification Factor ====
+  # In server function
+  output$network_insight <- renderText({
+    # Calculate digital reach compared to in-person interactions
+    digital_reach <- expo$post_reactions
+    in_person_interactions <- expo$networking_events + expo$presentation_opportunities + expo$meeting_opportunities
+    
+    amplification <- round(digital_reach / in_person_interactions, 1)
+    
+    paste0(amplification, "× Digital Amplification Factor")
+  })
+  
+  
+  # ===== Cost metrics =====
+  # Replace the current_expo_data reactive with this:
+  current_expo_data <- reactive({
+    req(input$expo_analysis)
+    selected_expo()
+  })
+  
+  # Individual reactive for total participation cost
+  total_participation_cost <- reactive({
+    expo <- current_expo_data ()
+    
+    sum(
+      expo$participation_fees,
+      expo$networking_fees, 
+      expo$gadget_costs, 
+      expo$ad_fee,
+      na.rm = TRUE
+    )
+  })
+  
+  # Individual reactive for ROI percentage
+  roi_percentage <- reactive({
+    expo <- expo_data()
+    
+    # Define value metrics
+    award_value <- expo$awards * 100000  # Assigning €100,000 value per award
+    meeting_value <- expo$meeting_opportunities * 300  # €300 value per meeting
+    follower_value <- expo$new_followers * 50  # €50 value per new follower
+    
+    # Calculate total value
+    total_value <- sum(award_value, meeting_value, follower_value, na.rm = TRUE)
+    
+    # Calculate ROI Percentage
+    ifelse(
+      total_participation_cost() > 0,
+      ((total_value - total_participation_cost()) / total_participation_cost()) * 100,
+      0
+    )
+  })
+  
+  # Individual reactive for net value of ROI
+  net_value <- reactive({
+    expo <- expo_data()
+    
+    # Define value metrics (same as in roi_percentage)
+    award_value <- expo$awards * 100000  # Assigning €100,000 value per award
+    meeting_value <- expo$meeting_opportunities * 300  # €300 value per meeting
+    follower_value <- expo$new_followers * 50  # €50 value per new follower
+    
+    # Calculate total value
+    total_value <- sum(award_value, meeting_value, follower_value, na.rm = TRUE)
+    
+    # Calculate net value (the actual euro amount gained or lost)
+    total_value - total_participation_cost()
+  })
+  
+  # Individual reactive for cost per impression
+  cost_per_impression <- reactive({
+    expo <- expo_data()
+    
+    ifelse(
+      expo$hashtag_reach > 0,
+      total_participation_cost() / expo$hashtag_reach,
+      0
+    )
+  })
+  
+  
+  
+  
+  # Cost Efficiency Box
+  output$cost_efficiency_box <- renderInfoBox({
+    req(selected_expo())
+    
+    expo <- selected_expo()
+    
+    # Calculate total cost
+    total_cost <- expo$participation_fees + expo$networking_fees + expo$ad_fee + expo$gadget_costs
+    
+    # Calculate cost per opportunity
+    total_opps <- expo$networking_events + expo$presentation_opportunities + expo$meeting_opportunities
+    cost_per_opp <- ifelse(total_opps > 0, total_cost / total_opps, Inf)
+    
+    # Determine color based on cost per opportunity
+    color <- case_when(
+      cost_per_opp <= 200 ~ "green", # Below 200 EUR
+      cost_per_opp <= 500 ~ "yellow", # 200EUR < x < 500EUR
+      TRUE ~ "red" # Over 500 EUR/opportunity
+    )
+    
+    infoBox(
+      "Cost Efficiency",
+      paste0("€", round(cost_per_opp)),
+      subtitle = paste0("€", total_cost, " total / ", total_opps, " opportunities"),
+      icon = icon("euro-sign"),
+      color = color
+    )
+  })
+  
+  # Marketing Overview Plot (Horizontal Bar Chart)
+  output$marketing_overview <- renderPlot({
+    req(selected_expo())
+    
+    expo <- selected_expo()
+    
+    # Create data for horizontal bar chart
+    categories <- c(
+      "Industry Relevance", "Networking Value", "Digital Impact",
+      "Award Recognition", "Cost Efficiency", "Overall Score"
+    )
+    
+    # Calculate normalized values for each category (0-10 scale)
+    relevance_score <- expo$relevance
+    
+    networking_value <- min(10, (expo$networking_events +
+                                   expo$presentation_opportunities * 2 +
+                                   expo$meeting_opportunities * 0.5) / 5)
+    
+    digital_impact <- min(10, (expo$linkedin_posts * 0.5 +
+                                 (expo$post_reactions / max(1, expo$post_views)) * 100 +
+                                 expo$new_followers / 10) / 5)
+    
+    award_recognition <- min(10, expo$awards * 8 + ifelse(expo$award_celebration, 2, 0))
+    
+    total_cost <- expo$participation_fees + expo$networking_fees + expo$ad_fee + expo$gadget_costs
+    total_opps <- expo$networking_events + expo$presentation_opportunities + expo$meeting_opportunities
+    cost_efficiency <- ifelse(total_cost > 0 && total_opps > 0,
+                              min(10, 10 * (1 - (total_cost / total_opps) / 1000)), 0
+    )
+    
+    overall_score <- min(10, expo$value_score / 10)
+    
+    # Combine values
+    values <- c(
+      relevance_score, networking_value, digital_impact,
+      award_recognition, cost_efficiency, overall_score
+    )
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      category = factor(categories, levels = rev(categories)), # Reverse order for better display
+      value = values
+    )
+    
+    # Add color column based on values
+    plot_data$color <- sapply(plot_data$value, function(v) {
+      if (v >= 7) return("#61A60E") # Green for high values
+      if (v >= 4) return("#7AB8D7") # Blue for medium values
+      return("#B2B2B2") # Grey for low values
+    })
+    
+    # Create horizontal bar chart
+    ggplot(plot_data, aes(x = value, y = category)) +
+      geom_bar(stat = "identity", aes(fill = color)) +
+      scale_fill_identity() +  # Use the actual colors specified in the data
+      geom_text(aes(label = round(value, 1)), hjust = -0.2) +
+      scale_x_continuous(limits = c(0, 11), breaks = 0:10) + # Add space for labels
+      theme_minimal() +
+      theme(
+        legend.position = "none",
+        panel.grid.major.y = element_blank(),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size = 11, face = "bold"),
+        axis.text.x = element_text(size = 12)
+      ) +
+      labs(
+        # title = paste0("Marketing Performance Overview: ", expo$expo_name, " (", expo$year, ")"),
+        x = "Score (0-10)",
+        y = NULL
+      )
+  })
+  
+  # Digital Engagement Funnel
+  output$digital_funnel <- renderPlot({
+    req(selected_expo())
+    
+    expo <- selected_expo()
+    
+    # Create data for funnel chart
+    stages <- c("Website Visitors", "Post Views", "Post Reactions", "New Followers")
+    values <- c(expo$website_visitors, expo$post_views, expo$post_reactions, expo$new_followers)
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      stage = factor(stages, levels = rev(stages)),
+      value = values
+    )
+    
+    # Create horizontal bar chart for funnel visualization
+    ggplot(plot_data, aes(x = stage, y = value)) +
+      geom_bar(stat = "identity", fill = "#61A60E", width = 0.6) +
+      geom_text(aes(label = value), hjust = -0.2, colour = "#61A60E", size = 8) +
+      coord_flip() +
+      scale_y_continuous(limits = c(0, max(values) * 1.2)) +
+      theme_minimal() +
+      labs(
+        # title = "Digital Engagement Funnel",
+        x = NULL,
+        y = "Count"
+      )+
+      theme(
+        axis.title.x = element_blank(),
+        axis.text = element_text(size = 14),
+        panel.grid.major.y = element_blank(),
+      )
+  })
+  
+  # Cost Breakdown
+  output$cost_analysis_plot <- renderPlot({
+    req(selected_expo())
+    expo <- selected_expo()
+    
+    # Create data for cost breakdown
+    categories <- c("Participation", "Networking", "Advertisement", "Gadgets")
+    values <- c(expo$participation_fees, expo$networking_fees, expo$ad_fee, expo$gadget_costs)
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      category = factor(categories, levels = categories),
+      cost = values
+    )
+    
+    # Calculate total cost and ROI
+    total_cost <- sum(values)
+    total_opps <- expo$networking_events + expo$presentation_opportunities + expo$meeting_opportunities
+    cost_per_opp <- ifelse(total_opps > 0, total_cost / total_opps, 0)
+    
+    # Calculate percentages for labeling
+    plot_data <- plot_data %>%
+      mutate(
+        percent = cost / sum(cost) * 100,
+        label = paste0(category, "\n", "€", format(cost, big.mark = ","), "\n", "(", round(percent, 1), "%)")
+      ) %>% 
+      arrange(cost)
+    # Create ordered factor with levels in the arranged order
+    plot_data$category <- factor(plot_data$category, levels = rev(plot_data$category))
+    # Get category order after arrangement to correctly map colors
+    ordered_categories <- levels(plot_data$category)
+    # Custom color palette from provided colors
+    prcs_colors <- c(
+      "#61A60E", "#7C563A", "#B2B2B2", "#7AB8D7"
+    )
+    
+    # # Find the indices of the top two cost categories
+    # top_indices <- order(plot_data$cost, decreasing = TRUE)[1:2]
+    # Create stacked bar chart
+    cost_chart <- 
+      ggplot(plot_data, aes(x = "", y = cost, fill = category)) +
+      geom_bar(stat = "identity", width = 0.4) +
+      geom_label_repel(
+        # data = plot_data[top_indices, ],  # Only use data for top two categories
+        aes(label = paste0(category, "\n€", format(cost, big.mark = ","), "\n", round(percent, 1), "%")),
+        # position = position_stack(vjust = 0.5),
+        color = "#fff",
+        fontface = "bold",
+        size = 6,
+        lineheight = 0.8,  # Controls spacing between lines in multi-line text
+        force = 40,          # Increase force to push labels apart
+        direction = "x",  # Allow movement directions in x, y, both
+        nudge_x = 0.9,
+        nudge_y = -1,
+        box.padding = 1.5,   # Add more padding around the labels
+        point.padding = 0.5, # Space between the bar and starting position of label
+        max.overlaps = 20,    # Allow more overlaps to be resolved
+        segment.color = NA   # Add this to change the line color as NA
+        
+      ) +
+      scale_fill_manual(values = prcs_colors[match(ordered_categories, categories)]) +
+      # Expand the plot area to accommodate labels
+      scale_y_continuous(
+        expand = expansion(mult = c(0, 0.1)), 
+        labels = scales::label_dollar(prefix = "€", suffix = "", scale_cut = c(K = 1e3, M = 1e6))
+      )+
+      theme_minimal() +
+      theme(legend.position = "none",
+            axis.text = element_text(size = 14),
+            
+      ) +
+      labs(
+        # title = "Cost Breakdown",
+        subtitle = paste0(
+          "Total Cost: €", format(total_cost, big.mark = ","), "\n",
+          "Cost per Opportunity: €", format(round(cost_per_opp), big.mark = ",")
+        ),
+        y = NULL, 
+        x = NULL
+      ) +
+      coord_flip()
+    
+    cost_chart
+    
+  })
+  
+  # Network & Media Value
+  output$network_media_plot <- renderPlot({
+    req(selected_expo())
+    
+    expo <- selected_expo()
+    
+    # Create data for comparison
+    categories <- c("Networking\nEvents", "Presentations", "Meetings", "LinkedIn\nPosts", "Post\nReactions")
+    values <- c(
+      expo$networking_events, expo$presentation_opportunities,
+      expo$meeting_opportunities, expo$linkedin_posts, expo$post_reactions
+    )
+    
+    types <- c(rep("Networking", 3), rep("Digital", 2))
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      category = factor(categories, levels = categories),
+      value = values,
+      type = factor(types)
+    )
+    
+    # Create grouped bar chart
+    ggplot(plot_data, aes(x = category, y = value, fill = type)) +
+      geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+      scale_fill_manual(values = c("Networking" = "#61A60E", "Digital" = "#B2B2B2")) +
+      theme_minimal() +
+      labs(
+        # title = "Network & Media Value Comparison",
+        x = NULL,
+        y = "Count",
+        fill = "Type"
+      ) +
+      # Fix the text label display
+      geom_text(aes(label = value, color = type), 
+                vjust = -0.5, 
+                position = position_dodge(width = 0.7), 
+                size = 5) +  # Reduced text size to prevent overlap
+      # Add color scale for text that matches the fill colors
+      scale_color_manual(values = c("Networking" = "#61A60E", "Digital" = "#B2B2B2")) +
+      theme(
+        axis.text = element_text(size = 10),
+        axis.title = element_blank(),
+        # Hide the color legend as it duplicates the fill legend
+        legend.position = "none",
+        # Make sure the plot has enough room at the top for labels
+        plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+      ) +
+      # Ensure y-axis extends high enough for the labels
+      coord_cartesian(clip = "off")  # Prevent clipping of labe
+  })
+  
+  
+  # ===== COMPARISON TAB ======
+  # Update the comparison dropdown with available expos
+  observe({
+    # Only run this observer when the user is logged in and expo_data exists
+    req(app_accessible())
+    req(expo_data())
+    req(nrow(expo_data()) > 0)
+    
+    # Create named vector for selectize input with event name and year
+    event_choices <- setNames(
+      1:nrow(expo_data()),
+      paste0(expo_data()$expo_name, " (", expo_data()$year, ")")
+    )
+    
+    updateSelectizeInput(session, "select_expos", choices = event_choices)
+  })
+  
+  # Reactive expression to get selected expos for comparison
+  selected_expos_for_comparison <- reactive({
+    # First check if user is logged in and data exists
+    req(app_accessible())
+    req(expo_data())
+    req(input$select_expos)
+    
+    # Get the selected indices
+    selected_indices <- as.numeric(input$select_expos)
+    
+    # Make sure all selected indices are valid
+    valid_indices <- selected_indices[selected_indices <= nrow(expo_data())]
+    req(length(valid_indices) > 0)
+    
+    # Return the selected rows from expo_data
+    result <- expo_data()[valid_indices, ]
+    
+    # Add a label column for easier identification in plots
+    result$label <- paste0(result$expo_name, " (", result$year, ")")
+    
+    # Only proceed with full_data processing if we have data
+    req(nrow(result) > 0)
+    
+    # Get the full dataset sorted by year
+    full_data <- expo_data()[order(expo_data()$year), ]
+    
+    # Calculate the sequential occurrence number for each event
+    result$times <- sapply(1:nrow(result), function(i) {
+      current_expo <- result$expo_name[i]
+      current_year <- result$year[i]
+      
+      # Find all occurrences of this event name up to and including this year
+      matching_expos <- full_data[full_data$expo_name == current_expo & full_data$year <= current_year, ]
+      
+      # Return the count (sequential number)
+      nrow(matching_expos)
+    })
+    
+    # Calculate website growth percentage
+    result$website_growth <- ifelse(
+      result$website_visitors_before > 0,
+      ((result$website_visitors - result$website_visitors_before) / result$website_visitors_before) * 100,
+      0
+    )
+    
+    # Calculate total cost
+    result$total_cost <- result$participation_fees + result$networking_fees +
+      result$ad_fee + result$gadget_costs
+    
+    return(result)
+  })
+  
+  
+  # Generate comparison when button is clicked
+  observeEvent(input$generate_comparison, {
+    req(selected_expos_for_comparison())
+    
+    # Ensure we have at least 2 events selected for comparison
+    if (nrow(selected_expos_for_comparison()) < 2) {
+      showNotification("Please select at least 2 events to compare", type = "warning")
+      return(NULL)
+    }
+    
+    # Get the comparison data
+    comparison_data <- selected_expos_for_comparison()
+    
+    # Get the selected metric
+    metric <- input$comparison_metric
+    
+    # Get the chart type
+    chart_type <- input$chart_type
+    
+    # Generate the appropriate chart
+    output$comparison_plot <- renderPlot({
+      # Get proper metric name for labeling
+      metric_name <- names(which(c(
+        "website_visitors" = "Website Visitors",
+        "website_growth" = "Website Growth (%)",
+        "linkedin_posts" = "LinkedIn Posts",
+        "post_views" = "Post Views",
+        "post_reactions" = "Post Reactions",
+        "impression_rate" = "Impression Rate",
+        "new_followers" = "New Followers",
+        "hashtag_reach" = "Hashtag Reach",
+        "networking_events" = "Networking Events",
+        "meeting_opportunities" = "Meeting Opportunities",
+        "ad_locations" = "Advertisement Locations",
+        "total_cost" = "Total Cost",
+        "gadgets_provided" = "Gadgets Provided",
+        "value_score" = "Overall Value Score",
+        "relevance" = "Industry Relevance",
+        "times" = "Exhibiting Frequency"
+      ) == metric))
+      
+      if (chart_type == "Bar Chart") {
+        # Create a bar chart
+        ggplot(comparison_data, aes(x = reorder(label, get(metric)), y = get(metric), fill = label)) +
+          geom_bar(stat = "identity") +
+          coord_flip() +
+          theme_minimal() +
+          theme(legend.position = "none") +
+          labs(
+            title = paste("Comparison by", metric_name),
+            x = "Event",
+            y = metric_name
+          ) +
+          geom_text(aes(label = round(get(metric), 1)), hjust = -0.2)
+      } else if (chart_type == "Radar Chart") {
+        # Prepare data for radar chart
+        radar_metrics <- c(
+          "website_visitors", "post_reactions", "new_followers",
+          "networking_events", "meeting_opportunities", "value_score"
+        )
+        
+        # Define their order
+        ordered_metrics <- c(
+          "Website Visitors", "Post Reactions", "New Followers",
+          "Networking Events", "Meetings", "Value Score"
+        )
+        
+        # Define the metric labels (with line breaks for better display)
+        label_metrics <- c(
+          "Website\nVisitors", "Post\nReactions", "New\nFollowers",
+          "Networking\nEvents", "Meetings", "Value\nScore"
+        )
+        
+        # Normalize data for radar chart
+        radar_data <- comparison_data %>%
+          select(label, all_of(radar_metrics)) %>%
+          mutate(across(all_of(radar_metrics), ~ . / max(., na.rm = TRUE) * 100))
+        
+        # Convert to long format for radar chart
+        radar_long <- radar_data %>%
+          pivot_longer(
+            cols = -label,
+            names_to = "metric",
+            values_to = "value"
+          ) %>%
+          # Improve metric labels
+          mutate(metric = case_when(
+            metric == "website_visitors" ~ "Website Visitors",
+            metric == "post_reactions" ~ "Post Reactions",
+            metric == "new_followers" ~ "New Followers",
+            metric == "networking_events" ~ "Networking Events",
+            metric == "meeting_opportunities" ~ "Meetings",
+            metric == "value_score" ~ "Value Score",
+            TRUE ~ metric
+          ))
+        
+        # Ensure metrics are properly ordered
+        radar_long$metric <- factor(radar_long$metric, levels = ordered_metrics)
+        
+        # Create a coordinate calculation function for the radar chart
+        calculate_radar_coords <- function(data) {
+          # Number of metrics (axes)
+          n_metrics <- length(unique(data$metric))
+          
+          # Calculate coordinates
+          data %>%
+            arrange(label, metric) %>%
+            group_by(label) %>%
+            mutate(
+              # Get the index of each metric in the ordered list
+              angle = match(as.character(metric), ordered_metrics) - 1,
+              # Convert to radians
+              angle = 2 * pi * angle / n_metrics,
+              # Calculate x and y coordinates
+              x = value * sin(angle),
+              y = value * cos(angle)
+            ) %>%
+            # Make sure each group has a complete path by adding first point at the end
+            group_modify(~ {
+              rbind(.x, .x[1, ]) # Add first row to the end of each group
+            }) %>%
+            ungroup()
+        }
+        
+        # Calculate coordinates for the radar chart
+        radar_coords <- calculate_radar_coords(radar_long)
+        
+        # Create radar chart using calculated coordinates
+        ggplot() +
+          # Add grid lines
+          geom_polygon(
+            data = data.frame(
+              x = 25 * sin(2 * pi * (0:100) / 100),
+              y = 25 * cos(2 * pi * (0:100) / 100)
+            ),
+            aes(x, y), fill = NA, color = "gray90"
+          ) +
+          geom_polygon(
+            data = data.frame(
+              x = 50 * sin(2 * pi * (0:100) / 100),
+              y = 50 * cos(2 * pi * (0:100) / 100)
+            ),
+            aes(x, y), fill = NA, color = "gray90"
+          ) +
+          geom_polygon(
+            data = data.frame(
+              x = 75 * sin(2 * pi * (0:100) / 100),
+              y = 75 * cos(2 * pi * (0:100) / 100)
+            ),
+            aes(x, y), fill = NA, color = "gray90"
+          ) +
+          geom_polygon(
+            data = data.frame(
+              x = 100 * sin(2 * pi * (0:100) / 100),
+              y = 100 * cos(2 * pi * (0:100) / 100)
+            ),
+            aes(x, y), fill = NA, color = "gray90"
+          ) +
+          
+          # Add radial lines
+          sapply(1:length(ordered_metrics), function(i) {
+            angle <- 2 * pi * (i - 1) / length(ordered_metrics)
+            geom_segment(
+              aes(x = 0, y = 0, xend = 110 * sin(angle), yend = 110 * cos(angle)),
+              color = "gray90"
+            )
+          }) +
+          
+          # Add actual data polygons
+          geom_polygon(
+            data = radar_coords,
+            aes(x = x, y = y, group = label, fill = label),
+            alpha = 0.2
+          ) +
+          
+          # Add lines and points
+          geom_path(
+            data = radar_coords,
+            aes(x = x, y = y, group = label, color = label),
+            size = 1
+          ) +
+          geom_point(
+            data = radar_coords %>% group_by(label, metric) %>% slice(1),
+            aes(x = x, y = y, color = label),
+            size = 3
+          ) +
+          
+          # Add axis labels
+          sapply(1:length(label_metrics), function(i) {
+            angle <- 2 * pi * (i - 1) / length(label_metrics)
+            geom_text(
+              aes(
+                x = 120 * sin(angle), y = 120 * cos(angle),
+                label = label_metrics[i]
+              ),
+              hjust = ifelse(sin(angle) < 0, 1, 0),
+              vjust = ifelse(cos(angle) < 0, 0, 1),
+              size = 3.5
+            )
+          }) +
+          
+          # Add percentage labels
+          geom_text(
+            data = data.frame(
+              x = 0,
+              y = c(25, 50, 75, 100),
+              label = c("25%", "50%", "75%", "100%")
+            ),
+            aes(x = x, y = y, label = label),
+            size = 3,
+            color = "gray50"
+          ) +
+          
+          # Set equal coordinates with expanded limits
+          coord_fixed(xlim = c(-150, 150), ylim = c(-150, 150)) +
+          
+          # Add titles and theme
+          labs(
+            title = "Multi-metric Comparison",
+            subtitle = "Normalized values (% of maximum)",
+            color = "Event",
+            fill = "Event"
+          ) +
+          theme_void() +
+          theme(
+            legend.position = "top",
+            plot.title = element_text(hjust = 0.5),
+            plot.subtitle = element_text(hjust = 0.5),
+            plot.margin = margin(t = 0, r = 0, b = 0, l = 0) # Add generous margins
+          )
+      }
+    })
+    
+    # Create a comparison table
+    output$comparison_table <- renderDT({
+      # Select relevant columns for the table
+      table_columns <- c(
+        "expo_name", "year", "location", "relevance", "value_score",
+        "website_visitors", "website_growth", "post_views", "post_reactions",
+        "impression_rate", "new_followers", "networking_events",
+        "presentation_opportunities", "meeting_opportunities", "total_cost"
+      )
+      
+      # Get subset of data for the table
+      table_data <- comparison_data[, table_columns]
+      
+      # Rename columns for display
+      colnames(table_data) <- c(
+        "Event Name", "Year", "Location", "Industry Relevance", "Value Score",
+        "Website Visitors", "Website Growth (%)", "Post Views", "Post Reactions",
+        "Impression Rate (%)", "New Followers", "Networking Events",
+        "Presentations", "Meetings", "Total Cost (€)"
+      )
+      
+      # Return the datatable
+      datatable(table_data,
+                options = list(
+                  pageLength = 5,
+                  scrollX = TRUE
+                ),
+                rownames = FALSE
+      )
+    })
+  })
+  
+  # ====== PDF Generation ==========
+  
+  # Assign the file name
+  filename <- reactive({
+    # Get the currently selected expo data
+    selected_data <- selected_expo()
+    paste("Event-Report", "_", selected_data$location, "_", selected_data$year, ".pdf", sep = "") # selected_data
+  })
+  
+  
+  # Create a reactive value for the awards parameter if awarded or not
+  awards <- reactive({
+    req(selected_expo())
+    expo <- selected_expo()
+    expo$awards
+  })
+  
+  # Create a reactive expression for the status text
+  award_status <- renderText({
+    if (awards()>= 1) {
+      "Won"
+    } else {
+      "Ineligible"
+    }
+  })
+  
+  # Calculate cost per opportunity as a reactive expression
+  cost_per_opp <- reactive({
+    # Calculate total cost
+    total_cost <- selected_expo()$participation_fees + 
+      selected_expo()$networking_fees + 
+      selected_expo()$ad_fee + 
+      selected_expo()$gadget_costs
+    
+    # Calculate total opportunities
+    total_opps <- selected_expo()$networking_events + 
+      selected_expo()$presentation_opportunities + 
+      selected_expo()$meeting_opportunities
+    
+    # Calculate cost per opportunity
+    ifelse(total_opps > 0, round(total_cost / total_opps,0), Inf)
+  }) 
+  
+  # Create a reactive expression for the network insight
+  network_insight <- reactive({
+    # Calculate digital reach compared to in-person interactions
+    digital_reach <- selected_expo()$post_reactions
+    in_person_interactions <- selected_expo()$networking_events + selected_expo()$presentation_opportunities + selected_expo()$meeting_opportunities
+    
+    amplification <- round(digital_reach / in_person_interactions, 1)
+    
+    paste0(amplification)
+  })
+  
+  # Use the reactive expression to render the text output
+  output$network_insight <- renderText({
+    network_insight()
+  })
+  
+  
+  
+  # reactive data frame of all expo data and for value_cost parameters
+  all_expos <- reactive({
+    # Get all expos
+    all_expos_df <- expo_data()
+    
+    # Add labels for expos
+    all_expos_df <- all_expos_df %>%
+      mutate(expo_label = paste0(expo_name, "\n  (", year, ")"))
+    
+    # Calculate median values for quadrant divisions
+    median_cost <- median(all_expos_df$cost)
+    median_value <- median(all_expos_df$value_score)
+    
+    # Add quadrant info to points
+    all_expos_df <- all_expos_df %>%
+      mutate(
+        quadrant = case_when(
+          cost <= median_cost & value_score >= median_value ~ "Value Champion",
+          cost > median_cost & value_score >= median_value ~ "Premium Investment",
+          cost <= median_cost & value_score < median_value ~ "Low Priority",
+          cost > median_cost & value_score < median_value ~ "Reconsider Commitment"
+        )
+      )
+    # Don't reference 'data' here as it's not defined in this context
+    return(all_expos_df)
+  })
+  
+  # Format currency function
+  format_currency <- function(value) {
+    if (is.null(value) || is.na(value)) {
+      return("€0")
+    }
+    
+    if (value < 1000) {
+      # Less than 1000: no decimal, no suffix
+      formatted <- paste0("€", round(value, 0))
+    } else if (value < 1000000) {
+      # 1000 to 999999: one decimal, K suffix
+      formatted <- paste0("€", format(round(value/1000, 1), nsmall=1), " K")
+    } else {
+      # 1000000 and above: one decimal, M suffix
+      formatted <- paste0("€", format(round(value/1000000, 1), nsmall=1), " M")
+    }
+    
+    return(formatted)
+  }
+  
+  # Export PDF
+  output$generatePDF <- downloadHandler(
+    filename = function() filename(),
+    content = function(file) {
+      withProgress(message = "Creating Report: ", value = 0, {
+        incProgress(0.3, detail = "Collecting inputs...")
+        
+        # Create a more robust temp directory
+        tempDir <- tempdir()
+        if (!dir.exists(tempDir)) {
+          dir.create(tempDir, recursive = TRUE)
+        }
+        
+        # Get the currently selected expo data
+        current_data <- selected_expo()
+        
+        # Write the selected dataframe to a temporary file with absolute path
+        temp_file <- file.path(tempDir, "current_data.rds")
+        saveRDS(current_data, temp_file)
+        
+        # Calculate relevance category
+        relevance_to_category <- function(relevance) {
+          case_when(
+            relevance >= 1 & relevance <= 3 ~ "SEED",
+            relevance >= 4 & relevance <= 6 ~ "GROW",
+            relevance >= 7 & relevance <= 9 ~ "ROOT",
+            relevance == 10 ~ "FLORA",
+            TRUE ~ NA_character_
+          )
+        }
+        
+        # Calculate actual relevance category
+        rel_category <- relevance_to_category(current_data$relevance)
+        
+        # Get quadrant info for the selected expo
+        all_expo_data <- expo_data() # Use the reactive expression from this app
+        
+        # Add total cost to all expos (needed for quadrant analysis)
+        all_expo_data <- all_expo_data %>%
+          mutate(
+            cost = participation_fees + networking_fees + ad_fee + gadget_costs,
+            expo_label = paste0(expo_name, "\n  (", year, ")")
+          )
+        
+        # Calculate median values for quadrant divisions
+        median_cost <- median(all_expo_data$cost)
+        median_value <- median(all_expo_data$value_score)
+        
+        # Add quadrant info to points
+        all_expo_data <- all_expo_data %>%
+          mutate(
+            quadrant = case_when(
+              cost <= median_cost & value_score >= median_value ~ "Value Champion",
+              cost > median_cost & value_score >= median_value ~ "Premium Investment",
+              cost <= median_cost & value_score < median_value ~ "Low Priority",
+              cost > median_cost & value_score < median_value ~ "Reconsider Commitment"
+            )
+          )
+        
+        # Find the selected expo in the overall dataset
+        selected_expo_in_all <- all_expo_data %>%
+          filter(expo_name == current_data$expo_name & year == current_data$year)
+        
+        # Write the all expos dataframe to a temporary file
+        temp_file2 <- tempfile(fileext = ".rds")
+        saveRDS(all_expo_data, temp_file2)
+        
+        # Calculate total cost for current data
+        total_cost <- current_data$participation_fees + current_data$networking_fees + 
+          current_data$ad_fee + current_data$gadget_costs
+        # Calculate total digital reaches
+        total_digi_reach <- (current_data$website_visitors + current_data$post_views + current_data$hashtag_reach)
+        
+        # Create parameters - adapted to match the existing app's data structure
+        params <- list(
+          location = current_data$location,
+          expo_name = current_data$expo_name,
+          year = current_data$year,
+          expo_name_year = paste(current_data$expo_name, " ", current_data$year, sep = ""),
+          value_score = as.character(current_data$value_score),
+          relevance_category = rel_category,
+          award_status = award_status(),  # Make sure to call this with ()
+          new_followers = paste(current_data$new_followers),
+          website_growth = paste(round(ifelse(
+            current_data$website_visitors_before > 0,
+            ((current_data$website_visitors - current_data$website_visitors_before) / current_data$website_visitors_before) * 100,
+            0
+          ),1), "%"),
+          total_opps = paste(current_data$networking_events + current_data$presentation_opportunities + current_data$meeting_opportunities),
+          engagement_rate = paste(ifelse(
+            current_data$post_views > 0,
+            round((current_data$post_reactions / current_data$post_views) * 100,1),
+            0
+          ) , "%"),
+          total_participation_cost = paste(format_currency(total_participation_cost())),  # Add () here
+          roi_percentage = paste(round(roi_percentage(),0), "%"),  # Add () here
+          net_value = paste(format_currency(net_value())),
+          cost_per_opp = paste(format_currency(cost_per_opp())),  # Add () here
+          network_insight = network_insight(),  # Make sure () is here
+          # Using networking_events and other metrics from the current app instead of booth_visitors
+          impression_rate = paste(current_data$impression_rate, "%"),
+          # Use available metrics for new connections
+          conversion_followers = paste(ifelse(current_data$post_views > 0,
+                                              round(current_data$new_followers / current_data$post_views * 100, 1),
+                                              0
+          ), "%"),
+          
+          effectiveness = ifelse(current_data$value_score > 70, "High",
+                                 ifelse(current_data$value_score > 40, "Medium", "Low")
+          ),
+          relevance_performance = ifelse(current_data$relevance > 7, "High",
+                                         ifelse(current_data$relevance > 4, "Medium", "Low")
+          ),
+          about_expo = current_data$about,
+          strategy = current_data$strategy, # Changed from purpose to strategy to match your schema
+          conclusion = current_data$conclusion,
+          notes = current_data$notes,
+          df_selected = temp_file,
+          df_all = temp_file2
+        )
+        
+        incProgress(0.3, detail = "Building...")
+        
+        # Create temporary directory and copy files
+        tempDir <- tempdir()
+        # Copy files with better error handling
+        appDir <- getwd()
+        tempReport <- file.path(tempDir, "report.qmd")
+        
+        # Add debugging information
+        message("App directory: ", appDir)
+        message("Temporary directory: ", tempDir)
+        
+        # Check if files exist before copying
+        if (file.exists(file.path(appDir, "report.qmd"))) {
+          file.copy(file.path(appDir, "report.qmd"), tempReport, overwrite = TRUE)
+        } else {
+          stop("report.qmd not found in ", appDir)
+        }
+        
+        # Create assets directory
+        dir.create(file.path(tempDir, "assets"), showWarnings = FALSE)
+        
+        # Copy typst files with error handling
+        typst_show_path <- file.path(appDir, "typst-show.typ")
+        typst_template_path <- file.path(appDir, "typst-template.typ")
+        
+        if (file.exists(typst_show_path)) {
+          file.copy(typst_show_path, file.path(tempDir, "typst-show.typ"), overwrite = TRUE)
+        } else {
+          stop("typst-show.typ not found in ", appDir)
+        }
+        
+        if (file.exists(typst_template_path)) {
+          file.copy(typst_template_path, file.path(tempDir, "typst-template.typ"), overwrite = TRUE)
+        } else {
+          stop("typst-template.typ not found in ", appDir)
+        }
+        
+        # Use tryCatch for better error handling
+        tryCatch({
+          # Set working directory to temp directory and render
+          withr::with_dir(tempDir, {
+            quarto::quarto_render(
+              input = "report.qmd",
+              output_format = "typst",
+              execute_params = params
+            )
+            
+            incProgress(1, detail = "Downloading report...")
+            
+            # Copy the generated PDF with proper error handling
+            generatedPDF <- file.path(tempDir, "report.pdf")
+            if (file.exists(generatedPDF)) {
+              file.copy(generatedPDF, file, overwrite = TRUE)
+            } else {
+              stop("Generated PDF not found: ", generatedPDF)
+            }
+          })
+        }, error = function(e) {
+          message("Error in PDF generation: ", e$message)
+          stop(paste("Failed to generate PDF:", e$message))
+        })
+      })
+    }
+  )
+  
+  
+}
+# Run the application
+shinyApp(ui = ui, server = server)

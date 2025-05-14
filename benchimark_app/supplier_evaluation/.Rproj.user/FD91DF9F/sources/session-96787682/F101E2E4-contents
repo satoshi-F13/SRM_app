@@ -23,11 +23,11 @@ color:
     white: "#FFFFFF"
   foreground: black
   background: white
-  primary: green
-  secondary: grey
+  primary: darkgreen
+  secondary: green
   success: green
-  info: darkgreen
-  warning: blue
+  info: grey
+  warning: brown
   danger: pink
   light: lightblue
   dark: darkgreen

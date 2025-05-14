@@ -15,6 +15,8 @@ library(readr)
 library(dplyr)
 library(ggmap)
 library(rsconnect)
+# Load the brand theme from _brand.yml
+theme <- bs_theme(brand = "_brand.yml")
 
 # Read the city data ####
 it_city <- read_csv(file = "data/it.csv")
@@ -29,32 +31,17 @@ val_sup_init <- function() {
 # Define UI for the app ####
 ui <-fluidPage( 
 
-  #Add a custom CSS
+  theme = theme,
+  
+  # Minimal custom CSS only for things not covered by theming
   tags$head(
     tags$style(HTML("
       .scroll-container {
-        overflow-y: auto; /* Enable vertical scrolling */
-        max-height: 500px; /* Set a maximum height for the scroll area */
+        overflow-y: auto;
+        max-height: 500px;
       }
       .modal-lg {
         width: 1200px;
-      }
-      .butt {
-        background-color: #8fce00;
-        color: #e6ebef;
-        margin-right: 10px;
-      }
-      .butt2{
-        background-color:#8EACCD;
-        color: #e6ebef;
-      }
-      .butt3{
-        background-color:#FF8A8A;
-        color: #e6ebef;
-      }
-      .butt4{
-        background-color:#B7B7B7;
-        color: #e6ebef;
       }
     "))
   ),
@@ -64,15 +51,16 @@ ui <-fluidPage(
   
   # The page_navbar component ####
   page_navbar(
-  title = "Supplier Relationship Board",
-  theme = bs_theme(brand = "_brand.yml"),
-  
+    title = "Supplier Relationship Board",
+    bg = "#61A60E",  # Background color
+    theme = theme,
+    
   # Tab 1: Data Input Page ####
   nav_panel(
     title = "DATA INPUT",
+    icon = bsicons::bs_icon("database"),
     fluidPage(
-      h1("Supplier Data Management", class = "text-center my-4"),
-      
+      #Upload file function
       fileInput("upload_csv", "Upload CSV", accept = c(".csv")),
       
       # Main content
@@ -85,8 +73,8 @@ ui <-fluidPage(
           br(),
           div(
             style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;",
-            actionButton(inputId = "Updated_sup", label = "Save", class = "butt"),
-            downloadButton("Supplier_csv", "Download in CSV", class = "butt")
+            actionButton(inputId = "Updated_sup", label = "Save", icon = icon("save"), class = "btn-primary"),
+            downloadButton("Supplier_csv", "Download in CSV", class = "btn-info")
           )
         )
       )
@@ -96,25 +84,19 @@ ui <-fluidPage(
   # Tab 2: Benchmark Report ####
   nav_panel(
     title = "ANALYSIS",
+    icon = bsicons::bs_icon("graph-up"),
     page_sidebar(
       # Sidebar
       sidebar = sidebar(
         title = "Controls",
-        # fileInput(
-        #   inputId = "upload_csv_report",
-        #   label = "Upload Supplier Data (CSV)",
-        #   accept = c(".csv"),
-        #   multiple = FALSE,
-        #   width = "100%",
-        #   buttonLabel = "Browse...",
-        #   placeholder = "No file selected"
-        # ),
+        bg = "#f8f9fa",
+        
         selectInput(
           inputId = "Company",
           label = "Select Supplier:",
           choices = val_sup_init()$Company
         ),
-        downloadButton("export_pdf", "PDF", class = "btn-success w-100"),
+        downloadButton("export_pdf", "Export Report", icon = icon("file-pdf"), class = "btn-primary w-100 mb-3"),
         
         card(
           card_header("Weight Control"),
@@ -163,7 +145,7 @@ ui <-fluidPage(
             showcase_layout = "top right"
           ),
           value_box(
-            title = "Selected Company",
+            title = "Company",
             value = textOutput("selected_company"),
             showcase = bsicons::bs_icon("person-vcard", size = ".7em"),
             theme = "secondary",
@@ -241,6 +223,7 @@ ui <-fluidPage(
 )
 )
 
+# SERVER PART ####
 server <- function(input, output, session) {
   # Reactive values to store data
   val_sup <- reactiveValues()
@@ -298,10 +281,8 @@ server <- function(input, output, session) {
     }
   })
   
-  #==========================================
-  # Data Input Tab Functions
-  #==========================================
-  
+  # Data Input Tab Functions####
+
   # CSV Upload Handling for Data Input tab####
   observeEvent(input$upload_csv, {
     req(input$upload_csv)
@@ -330,18 +311,24 @@ server <- function(input, output, session) {
   output$MainBody_sup <- renderUI({
     fluidPage(
       hr(),
-      column(6,
-             offset = 0,
-             HTML('<div class="sbtn-group" role="group" aria-label="Basic example" style = "padding:10px">'),
-             div(style = "display:inline-block;width:30%;text-align: center;", actionButton(inputId = "Add_row_head", label = "Add", class = "butt2")),
-             div(style = "display:inline-block;width:30%;text-align: center;", actionButton(inputId = "mod_row_head", label = "Edit", class = "butt4")),
-             div(style = "display:inline-block;width:30%;text-align: center;", actionButton(inputId = "Del_row_head", label = "Delete", class = "butt3")),
-             HTML("</div>")
-      ),
-      column(12, dataTableOutput("Main_table_sup")),
-      tags$script("$(document).on('click', '#Main_table_sup button', function () {
-                   Shiny.onInputChange('lastClickId', this.id);
-                   Shiny.onInputChange('lastClick', Math.random()) });")
+      card(
+        card_header("Supplier Data Management"),
+        card_body(
+          column(6,
+                 offset = 0,
+                 div(
+                   class = "d-flex justify-content-between mb-3",
+                   actionButton(inputId = "Add_row_head", label = "Add", icon = icon("plus"), class = "btn-primary"),
+                   actionButton(inputId = "mod_row_head", label = "Edit", icon = icon("edit"), class = "btn-info"),
+                   actionButton(inputId = "Del_row_head", label = "Delete", icon = icon("trash"), class = "btn-danger")
+                 )
+          ),
+          column(12, dataTableOutput("Main_table_sup")),
+          tags$script("$(document).on('click', '#Main_table_sup button', function () {
+                     Shiny.onInputChange('lastClickId', this.id);
+                     Shiny.onInputChange('lastClick', Math.random()) });")
+        )
+      )
     )
   })
   
@@ -524,10 +511,8 @@ server <- function(input, output, session) {
     }
   )
   
-  #==========================================
-  # Benchmark Report Tab Functions
-  #==========================================
-  
+# Benchmark Report Tab Functions####
+
   # CSV Upload for Report tab
   observeEvent(input$upload_csv_report, {
     req(input$upload_csv_report)
@@ -667,7 +652,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Radar Chart
+  # Radar Chart####
   output$radarChart <- renderPlotly({
     req(input$Company, report_data())
     if (nrow(report_data()) > 0 && input$Company %in% report_data()$Company) {
@@ -684,7 +669,10 @@ server <- function(input, output, session) {
             selected_data$Service, selected_data$Technology, selected_data$Cost
           ),
           theta = c("Cost", "Quality", "Delivery", "Service", "Technology", "Cost"),
-          name = selected_data$Company
+          name = selected_data$Company,
+          # Use the primary color from your theme
+          fillcolor = scales::alpha("#61A60E", 0.7),
+          line = list(color = "#61A60E")
         ) %>%
         layout(
           polar = list(

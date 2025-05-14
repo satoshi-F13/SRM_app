@@ -89,7 +89,7 @@ server <- function(input, output, session) {
       hr(),
       column(6,
         offset = 0,
-        HTML('<div class="btn-group" role="group" aria-label="Basic example" style = "padding:10px">'),
+        HTML('<div class="sbtn-group" role="group" aria-label="Basic example" style = "padding:10px">'),
         ### tags$head() This is to change the color of "Add a new row" button
         tags$head(tags$style(".butt2{background-color:#8EACCD;} .butt2{color: #e6ebef;}")),
         div(style = "display:inline-block;width:30%;text-align: center;", actionButton(inputId = "Add_row_head", label = "Add", class = "butt2")),
