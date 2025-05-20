@@ -1,0 +1,115 @@
+# UI Components
+
+# Read the city data
+it_city <- read_csv(file = "data/it.csv")
+
+# Data Input Tab UI
+data_input_tab_ui <- function() {
+  fluidPage(
+    # Upload file function
+    fileInput("upload_csv", "Upload CSV", accept = c(".csv")),
+    
+    # Main content
+    uiOutput("MainBody_sup"),
+    
+    # Action buttons
+    fluidRow(
+      column(
+        12,
+        helpText("Note: Remember to save any updates!"),
+        br(),
+        div(
+          style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;",
+          actionButton(inputId = "Updated_sup", label = "Save", icon = icon("save"), class = "btn-primary"),
+          downloadButton("Supplier_csv", "Download in CSV", class = "btn-info")
+        )
+      )
+    )
+  )
+}
+
+# Analysis Tab UI
+analysis_tab_ui <- function() {
+  page_sidebar(
+    # Sidebar
+    sidebar = sidebar(
+      title = "Controls",
+      bg = "#f8f9fa",
+      
+      selectInput(
+        inputId = "Company",
+        label = "Select Supplier:",
+        choices = NULL
+      ),
+      
+      downloadButton("export_pdf", "Export Report", icon = icon("file-pdf"), class = "btn-primary w-100 mb-3"),
+      
+      # Weight controls
+      card(
+        card_header("Weight Control"),
+        lapply(
+          list(
+            list("cost_weight", "Cost Weight:", 0.25),
+            list("quality_weight", "Quality Weight:", 0.3),
+            list("delivery_weight", "Delivery Weight:", 0.25),
+            list("service_weight", "Service Weight:", 0.1),
+            list("tech_weight", "Technology Weight:", 0.1)
+          ),
+          function(item) {
+            sliderInput(item[[1]], item[[2]], min = 0, max = 1, value = item[[3]], step = 0.05)
+          }
+        )
+      )
+    ),
+    
+    # Main Content
+    div(
+      class = "container-fluid",
+      
+      # Value Boxes
+      layout_columns(
+        fill = FALSE,
+        create_value_box("Top Performer", "top_performer", "trophy-fill", "success"),
+        create_value_box("Total Suppliers", "total_suppliers", "people-fill", "primary"),
+        create_value_box("Company", "selected_company", "person-vcard"),
+        create_value_box("Overall Score", "selected_score", "speedometer2"),
+        create_value_box("Ranking", "supplier_rank", "bar-chart-line-fill"),
+        create_value_box("Distance", "distance", "sign-merge-right")
+      ),
+      
+      # Charts
+      layout_columns(
+        col_widths = c(6, 6),
+        card(
+          card_header("Performance Analysis"),
+          full_screen = TRUE,
+          div(
+            style = "height: 300px; width: 100%; display: flex; justify-content: center; align-items: center;",
+            plotlyOutput("radarChart", height = "100%", width = "100%")
+          ),
+          card_body(min_height = 50)
+        ),
+        
+        card(
+          card_header("Geographical Distribution"),
+          full_screen = TRUE,
+          div(
+            style = "height: 100%; margin: 0; padding: 0;",
+            plotlyOutput("scattermap", height = "100%", width = "100%")
+          ),
+          card_body(
+            style = "margin: 0; padding: 0;",
+            min_height = 50
+          )
+        )
+      ),
+      
+      # Data Table
+      card(
+        card_header("Supplier Database"),
+        full_screen = TRUE,
+        dataTableOutput("Report_table_sup")
+      )
+    )
+  )
+}

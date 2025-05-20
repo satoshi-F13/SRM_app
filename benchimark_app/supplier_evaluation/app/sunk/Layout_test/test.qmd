@@ -1,0 +1,34 @@
+---
+title: "test"
+format: 
+  html:
+    css: custom.css
+---
+
+
+The outer ::: {.grid} container creates a 12-column grid
+Each cell is defined with ::: {.g-col-X} where X is the number of columns it spans:
+
+First cell: .g-col-3 (spans 3 columns)
+Middle cell: .g-col-6 (spans 6 columns)
+Last cell: .g-col-3 (spans 3 columns)
+
+::: {.grid}
+::: {.g-col-3}
+Overview
+:::
+
+::: {.g-col-3}
+![NOVARA](map.png){fig-align="center" width="90%" fig-cap="NOVARA"}
+:::
+
+::: {.g-col-3}
+![LOCATION](location-map.png){fig-align="center"}
+:::
+
+::: {.g-col-3}
+![ROMA](location-map.png){fig-align="center" width="90%"}
+:::
+:::
+
+

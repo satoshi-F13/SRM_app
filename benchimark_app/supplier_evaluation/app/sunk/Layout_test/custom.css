@@ -1,0 +1,39 @@
+.custom-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.custom-table td, .custom-table th {
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1); /* transparent border */
+}
+
+.grid-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.key-value {
+  background-color: #f9f9f9;
+  padding: 15px;
+  border-radius: 5px;
+}
+
+.key-metric {
+  font-size: 1.2em;
+  color: #666;
+}
+
+.value-metric {
+  font-size: 2.5em;
+  color: #76b852;
+  font-weight: bold;
+}
+
+.section-header {
+  color: #76b852;
+  font-size: 1.5em;
+  margin-top: 30px;
+  margin-bottom: 15px;
+}

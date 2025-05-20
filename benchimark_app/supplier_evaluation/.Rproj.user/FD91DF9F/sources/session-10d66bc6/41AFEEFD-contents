@@ -1,0 +1,546 @@
+---
+title: "Suppliers' Benchmark Report"
+format: 
+   typst:
+     template-partials:
+       - typst-show.typ
+       - typst-template.typ
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  company: '`r params$company`'
+  data: NULL
+  distance: '`r params$distance`'
+  df: NULL
+  ranking: '`r params$ranking`'
+  total_sup: '`r params$total_sup`'
+  score: '`r params$score`'
+  category: '`r params$category`'
+  tech_level: '`r params$tech_level`'
+---
+
+# Introduction {.unnumbered}
+
+
+In the dynamic landscape of supply chain management, systematic supplier evaluation is crucial for maintaining
+competitive advantage and operational excellence. This comprehensive report analyzes **`r params$company`**'s performance
+across five critical dimensions: quality, cost, delivery, service, and technology. Utilizing a standardized scoring
+methodology, each dimension is meticulously assessed on a scale of 1 to 10, culminating in a total potential score
+of 50 points.
+
+
+# Key Findings {.unnumbered}
+::: {.grid layout-ncol=3 layout-valign="center" layout-halign="center" layout-gap="10pt" style="text-align: center;"}
+::: {.key-value-box style="background-color: #f9f9f9; padding: 15px; border-radius: 5px;"}
+<div style="font-size: 2.5em; color: #76b852; font-weight: bold;">`r params$score`</div>
+<span style="font-size: 1.2em; color: #B2B2B2; margin-top: 0.5em; display: block; font-weight: bold;">Overall Score</span>
+:::
+::: {.key-value-box style="background-color: #f9f9f9; padding: 15px; border-radius: 5px;"}
+<div style="font-size: 2.5em; color: #76b852; font-weight: bold;">`r params$total_sup`</div>
+<span style="font-size: 1.2em; color: #B2B2B2; margin-top: 0.5em; display: block; font-weight: bold;">Suppliers in total</span>
+:::
+::: {.key-value-box style="background-color: #f9f9f9; padding: 15px; border-radius: 5px;"}
+<div style="font-size: 2.5em; color: #76b852; font-weight: bold;">`r params$ranking`</div>
+<span style="font-size: 1.2em; color: #B2B2B2; margin-top: 0.5em; display: block; font-weight: bold;">Ranking</span>
+:::
+
+::: {.key-value-box style="background-color: #f9f9f9; padding: 15px; border-radius: 5px;"}
+<div style="font-size: 2.5em; color: #76b852; font-weight: bold;">`r params$distance`</div>
+<span style="font-size: 1.2em; color: #B2B2B2; margin-top: 0.5em; display: block; font-weight: bold;">away from a delivery place</span>
+:::
+
+::: {.key-value-box style="background-color: #f9f9f9; padding: 15px; border-radius: 5px;"}
+<div style="font-size: 2.5em; color: #76b852; font-weight: bold;">`r params$category`</div>
+<span style="font-size: 1em; color: #B2B2B2; margin-top: 0.5em; display: block; font-weight: bold;"> category after the composite score evaluation.</span>
+:::
+::: {.key-value-box style="background-color: #f9f9f9; padding: 15px; border-radius: 5px;"}
+<div style="font-size: 2.5em; color: #76b852; font-weight: bold;">`r params$tech_level`</div>
+<span style="font-size: 1.2em; color: #B2B2B2; margin-top: 0.5em; display: block; font-weight: bold;"> technical level as a supplier.</span>
+:::
+
+:::
+
+
+
+
+
+```{r}
+# Improved Visualizations for Supplier Analysis
+# Libraries
+library(tidyverse)
+library(ggbump)
+library(GGally)      # For parallel coordinates
+library(scales)      # For scaling
+library(ggrepel)     # For non-overlapping labels
+library(RColorBrewer) # For color palettes
+library(patchwork)   # For combining plots
+library(ggthemes)    # For better themes
+library(viridis)     # For colorblind-friendly palettes
+library(giscoR)      # for mapping
+ 
+
+# Load the data
+suppliers_data <- readRDS(params$data)
+
+# Set the selected company (can be changed to 'a', 'b', or 'c')
+selected_company <- `r params$supplier_name`  # Change this to analyze different companies
+
+# Get total number of suppliers
+total_sup <- nrow(suppliers_data)
+
+# Get ranking based on average score
+suppliers_data$avg_score <- rowMeans(suppliers_data[, c("Cost", "Quality", "Delivery", "Service", "Technology")])
+suppliers_data$ranking <- rank(-suppliers_data$avg_score)
+selected_ranking <- suppliers_data$ranking[suppliers_data$Company == selected_company]
+
+# Calculate normalized scores (0-1 scale)
+normalize <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+suppliers_normalized <- suppliers_data %>%
+  mutate(across(c(Cost, Quality, Delivery, Service, Technology), normalize))
+
+# Add supplier categorization
+suppliers_data <- suppliers_data %>%
+  mutate(
+    supplier_group = case_when(
+      Cost >= 7 & Quality >= 7 ~ "Strategic",
+      Cost >= 7 & Quality < 7 ~ "Economical",
+      Cost < 7 & Quality >= 7 ~ "Improvement",
+      TRUE ~ "High-Risk"
+    ),
+    Technology_Level = case_when(
+      Technology >= 7 ~ "High",
+      Technology >= 4 & Technology < 7 ~ "Medium",
+      TRUE ~ "Low"
+    )
+  )
+
+# Function to create a custom color palette where the selected company is highlighted
+get_company_colors <- function(data, selected_company) {
+  n <- nrow(data)
+  if (n <= 3) {
+    cols <- brewer.pal(3, "Set1")
+  } else {
+    cols <- brewer.pal(min(n, 9), "Set1")
+    if (n > 9) cols <- colorRampPalette(cols)(n)
+  }
+  
+  # Assign colors to companies
+  company_colors <- setNames(cols, data$Company)
+  
+  # Ensure selected company is red
+  company_colors[selected_company] <- "#FF0000"
+  
+  return(company_colors)
+}
+
+company_colors <- get_company_colors(suppliers_data, selected_company)
+
+```
+
+
+
+
+::: {.grid layout-ncol=2 layout-valign="center" layout-halign="center" layout-gap="10pt" style="text-align: center;"}
+
+
+
+## Performance Comparison 
+
+```{r}
+# Reshape the data from wide to long format
+suppliers_long <- suppliers_data %>%
+  select(Company, Cost, Quality, Delivery, Service, Technology) %>%
+  pivot_longer(
+    cols = c(Cost, Quality, Delivery, Service, Technology),
+    names_to = "criteria", 
+    values_to = "score"
+  ) %>%
+  # Add columns for line width and point size
+  mutate(
+    line_width = ifelse(Company == selected_company, 2.5, 1),
+    point_size = ifelse(Company == selected_company, 8, 4)
+  )
+
+# Create color vector - highlight the selected company
+company_colors <- ifelse(
+  unique(suppliers_long$Company) == selected_company,
+  "#61A60E", # Blue color for selected company
+  "grey70"   # Grey for all other companies
+)
+names(company_colors) <- unique(suppliers_long$Company)
+
+# Get the average score for the selected company to place annotations
+selected_company_avg <- suppliers_long %>%
+  filter(Company == selected_company) %>%
+  summarize(avg_score = mean(score)) %>%
+  pull(avg_score)
+
+# Create the bump chart with scores instead of ranks
+ggplot(suppliers_long, aes(x = criteria, y = score, color = Company, group = Company)) +
+  # Add a light horizontal band to indicate good performance zone
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 7, ymax = 10, 
+           fill = "lightgreen", alpha = 0.1) +
+  # Add a light horizontal band to indicate poor performance zone
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = 4, 
+           fill = "lightpink", alpha = 0.1) +
+  # Add reference lines
+  geom_hline(yintercept = 7, linetype = "dashed", color = "gray80", linewidth = 0.7) +
+  geom_hline(yintercept = 4, linetype = "dashed", color = "gray80", linewidth = 0.7) +
+  # Add bump lines and points
+  geom_bump(aes(linewidth = line_width)) +
+  geom_point(aes(size = point_size)) +
+  # Add text annotations for performance zones
+  annotate("text", x = 1, y = 8.5, label = "Good Performance", size = 3.5, 
+           fontface = "bold", alpha = 0.7, hjust = 0) +
+  annotate("text", x = 1, y = 2, label = "Poor Performance", size = 3.5, 
+           fontface = "bold", alpha = 0.7, hjust = 0) +
+  # Add text labels for all companies at the last criteria
+  geom_text_repel(
+    data = suppliers_long %>% filter(
+      criteria == last(unique(criteria)) & 
+      (Company == selected_company | score > selected_company_avg + 1 | score < selected_company_avg - 1)
+    ),
+    aes(label = Company),
+    hjust = -0.3,
+    fontface = "bold",
+    size = 3.5,
+    direction = "y",
+    segment.color = "grey50",
+    box.padding = 0.5,
+    nudge_x = 0.2
+  ) +
+  # Add an annotation to highlight selected company's performance
+  # annotate(
+  #   "text", 
+  #   x = mean(1:length(unique(suppliers_long$criteria))), 
+  #   y = 1, 
+  #   label = paste0(selected_company, "'s best performance is in ", 
+  #                 suppliers_long %>% 
+  #                   filter(Company == selected_company) %>% 
+  #                   slice_max(score) %>% 
+  #                   pull(criteria)),
+  #   size = 3.5,
+  #   fontface = "italic",
+  #   hjust = 0.5
+  # ) +
+  # Set scales
+  scale_color_manual(values = company_colors) +
+  scale_linewidth_identity() +
+  scale_size_identity() +
+  scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 2)) +
+  # Set theme and labels
+  theme_minimal() +
+  labs(
+    # title = paste("Performance Comparison -", selected_company, "is", 
+    #               ordinal(selected_ranking), "of", total_sup, "suppliers"),
+    # subtitle = "Performance across all evaluation criteria",
+    x = "Evaluation Criteria",
+    y = "Score (Higher is Better)",
+    caption = "Highlighted bands indicate good (green) and poor (red) performance zones"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, margin = margin(b = 15)),
+    axis.title = element_text(face = "bold", size = 12),
+    axis.text = element_text(size = 10),
+    axis.text.x = element_text(face = "bold", angle = 0),
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.border = element_rect(color = "gray80", fill = NA, size = 0.5),
+    plot.margin = margin(20, 30, 20, 20),
+    plot.caption = element_text(face = "italic", hjust = 0)
+  ) +
+  # Increase the aspect ratio to make the plot wider
+  coord_cartesian(xlim = c(0.5, length(unique(suppliers_long$criteria)) + 0.5), 
+                  ylim = c(0, 10), 
+                  expand = FALSE)
+```
+
+## Performance Classification
+
+```{r}
+improved_scatter_plot <- ggplot(suppliers_data, aes(
+  x = Cost,
+  y = Quality,
+  color = Company,
+  shape = supplier_group,
+  size = Technology
+)) +
+  # Add background rectangles for quadrants with light colors
+  annotate("rect", xmin = 1, xmax = 7, ymin = 7, ymax = 10, 
+           fill = "lightblue", alpha = 0.1) +
+  annotate("rect", xmin = 7, xmax = 10, ymin = 7, ymax = 10, 
+           fill = "lightgreen", alpha = 0.1) +
+  annotate("rect", xmin = 1, xmax = 7, ymin = 1, ymax = 7, 
+           fill = "lightpink", alpha = 0.1) +
+  annotate("rect", xmin = 7, xmax = 10, ymin = 1, ymax = 7, 
+           fill = "lightyellow", alpha = 0.1) +
+  
+  # Add quadrant lines
+  geom_hline(yintercept = 7, linetype = "dashed", color = "gray80", linewidth = 0.7) +
+  geom_vline(xintercept = 7, linetype = "dashed", color = "gray80", linewidth = 0.7) +
+  
+  # Add points with better visibility
+  geom_point(alpha = 0.9, stroke = 1.5) +
+  
+  # Add text labels for quadrants
+  annotate("text", x = 3.5, y = 9, label = "Uplift", size = 4, fontface = "bold", alpha = 0.7) +
+  annotate("text", x = 8.5, y = 9, label = "Strategic", size = 4, fontface = "bold", alpha = 0.7) +
+  annotate("text", x = 3.5, y = 3, label = "High-Risk", size = 4, fontface = "bold", alpha = 0.7) +
+  annotate("text", x = 8.5, y = 3, label = "Economical", size = 4, fontface = "bold", alpha = 0.7) +
+  
+  # Add company labels - only for selected company and outliers
+  geom_text_repel(
+    data = suppliers_data %>% 
+      mutate(
+        is_special = Company == selected_company | 
+                    (Cost < 3 | Cost > 9 | Quality < 3 | Quality > 9)
+      ) %>% 
+      filter(is_special),
+    aes(label = Company),
+    fontface = "bold",
+    point.padding = 0.5,
+    segment.color = "grey50",
+    box.padding = 0.5,
+    min.segment.length = 0,
+    max.overlaps = 20
+  ) +
+  
+  # Highlight the selected company with a circle
+  geom_point(
+    data = suppliers_data %>% filter(Company == selected_company),
+    color = "black", fill = NA, shape = 21, size = 12, stroke = 1.5
+  ) +
+  
+  # Set scales and aesthetics - use distinctive colors only for selected company
+  scale_color_manual(values = company_colors) +
+  scale_shape_manual(values = c(
+    "Strategic" = 16,      # circle
+    "Uplift" = 17,    # triangle
+    "High-Risk" = 15,      # square
+    "Economical" = 18  # diamond
+  )) +
+  scale_size_continuous(range = c(3, 8)) +
+  
+  # Create fixed square aspect ratio
+  coord_fixed(ratio = 0.5, xlim = c(1, 10), ylim = c(1, 10), expand = TRUE) +
+  
+  # Add informative caption instead of size legend
+  labs(
+    # title = paste("Supplier Classification -", selected_company, "Performance Analysis"),
+    subtitle = "Cost vs. Quality with Technology Level",
+    x = "Cost Score (Higher is Better)",
+    y = "Quality Score (Higher is Better)",
+    shape = "Supplier Group",
+    caption = paste0(
+      "Point size represents Technology score (larger = better)\n",
+      selected_company, "'s Technology score: ", 
+      suppliers_data %>% filter(Company == selected_company) %>% pull(Technology) %>% round(1),
+      " (", ifelse(
+        suppliers_data %>% filter(Company == selected_company) %>% pull(Technology) > 7,
+        "Above average", "Below average"), ")"
+    )
+  ) +
+  
+  # Enhance theme for better visualization
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, margin = margin(b = 15)),
+    axis.title = element_text(face = "bold", size = 12),
+    axis.text = element_text(size = 10),
+    legend.position = "none",  # Remove all legends
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.border = element_rect(color = "gray80", fill = NA, size = 0.5),
+    plot.margin = margin(20, 20, 20, 20),
+    plot.caption = element_text(hjust = 0, size = 10, face = "italic", margin = margin(t = 15))
+  ) +
+  
+  # Add direct annotations explaining key aspects
+  annotate(
+    "text", x = 5.5, y = 1.5, 
+    label = paste0("Quadrant count: Strategic (", 
+                  suppliers_data %>% filter(supplier_group == "Strategic") %>% nrow(), 
+                  "), Improvement (", 
+                  suppliers_data %>% filter(supplier_group == "Improvement") %>% nrow(),
+                  ")"), 
+    size = 3, hjust = 0.5
+  )
+
+improved_scatter_plot
+```
+
+
+
+:::
+
+
+::: {.grid layout-ncol=2 layout-valign="center" layout-halign="center" layout-gap="10pt" style="text-align: center;"}
+
+## BAR CHART WITH NORMALIZED SCORES
+```{r}
+bar_data <- suppliers_data %>%
+  select(Company, Cost, Quality, Delivery, Service, Technology) %>%
+  gather(key = "Category", value = "Score", -Company) %>%
+  mutate(Category = factor(Category, levels = c("Cost", "Quality", "Delivery", "Service", "Technology")))
+
+# Create bar chart
+normalized_bar_plot <- ggplot(bar_data, aes(x = Category, y = Score, fill = Company)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9), width = 0.8) +
+  geom_text(
+    aes(label = Score),
+    position = position_dodge(width = 0.9),
+    vjust = -0.5,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(values = company_colors) +
+  scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 2)) +
+  labs(
+    title = paste("Category Performance Comparison -", selected_company, "vs. Competitors"),
+    subtitle = "Score Comparison Across All Evaluation Categories",
+    x = "Performance Category",
+    y = "Score (1-10 Scale)",
+    fill = "Company"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, margin = margin(b = 15)),
+    axis.title = element_text(face = "bold", size = 12),
+    axis.text = element_text(size = 10),
+    axis.text.x = element_text(face = "bold", angle = 0),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "gray90"),
+    panel.border = element_rect(color = "gray80", fill = NA, size = 0.5)
+  )
+
+normalized_bar_plot
+
+```
+
+## GEOGRAPHICAL VISUALIZATION
+
+```{r}
+# Load necessary packages if not already loaded
+# install.packages(c("giscoR", "sf", "ggrepel"))
+# library(giscoR)
+library(sf)
+# library(ggrepel)
+# Get Italy map at NUTS level 2 (regions)
+italy_nuts2 <- gisco_get_nuts(
+  country = "Italy",
+  resolution = "01", #'01','03','10','20','60'
+  nuts_level = 2
+)
+
+# Get Italian provinces (NUTS level 3)
+italy_nuts3 <- gisco_get_nuts(
+  country = "Italy", 
+  resolution = "01", 
+  nuts_level = 3
+)
+
+# Get major Italian cities from maps package
+library(maps)
+italy_cities_df <- world.cities %>% 
+  filter(country.etc == "Italy") %>%
+  as.data.frame()
+
+# Convert cities to sf object
+italy_cities_sf <- italy_cities_df %>%
+  st_as_sf(coords = c("long", "lat"), crs = 4326)
+
+# Convert supplier data to sf object for spatial plotting
+suppliers_sf <- suppliers_data %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) %>%
+  mutate(
+    point_size = avg_score,
+    highlight = ifelse(Company == selected_company, "yes", "no")
+  )
+
+# Create an improved map
+map_plot <- ggplot() +
+  # Add Italy regions with light fill
+  geom_sf(data = italy_nuts2, fill = "gray95", color = "gray80", size = 0.2) +
+  
+  # Add province boundaries with thinner lines
+  geom_sf(data = italy_nuts3, fill = NA, color = "gray70", size = 0.1) +
+  
+  # Add major cities as small reference points
+  geom_sf(data = italy_cities_sf, color = "gray50", size = 0.5, alpha = 0.6) +
+  
+  # Add supplier points
+  geom_sf(data = suppliers_sf, 
+         aes(color = Company, size = point_size),
+         alpha = 0.9, stroke = 1.5) +
+  
+  # Add a highlight circle around the selected company
+  geom_sf(data = suppliers_sf %>% filter(Company == selected_company),
+         color = "black", fill = NA, shape = 21, size = 16, stroke = 1.2) +
+  
+  # Add text labels for suppliers
+  ggrepel::geom_text_repel(
+    data = as.data.frame(st_coordinates(suppliers_sf)) %>% 
+          bind_cols(suppliers_sf %>% st_drop_geometry()),
+    aes(
+      x = X, 
+      y = Y,
+      label = paste0(Company, " (", City, ")"),
+      color = Company
+    ),
+    fontface = "bold",
+    point.padding = 0.5,
+    segment.color = "grey50",
+    box.padding = 0.5,
+    force = 5,
+    max.overlaps = 15
+  ) +
+  
+  # Set color scales
+  scale_color_manual(values = company_colors) +
+  scale_size_continuous(range = c(5, 12), name = "Average Score") +
+  
+  # Set labels
+  labs(
+    # title = paste("Geographical Distribution of Suppliers in Italy -", selected_company, "Highlighted"),
+    # subtitle = "Size indicates average performance score across all metrics",
+    caption = paste0(
+      "Total suppliers: ", nrow(suppliers_data), " | ",
+      "Selected supplier location: ", 
+      suppliers_data %>% filter(Company == selected_company) %>% pull(City)
+    )
+  ) +
+  
+  # Use a clean theme
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, margin = margin(b = 15)),
+    legend.position = "none",
+    legend.title = element_text(face = "bold"),
+    legend.box = "vertical",
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.border = element_rect(color = "gray80", fill = NA, size = 0.5),
+    plot.caption = element_text(hjust = 0, face = "italic", margin = margin(t = 10))
+  ) +
+  
+  # Add a proper coord_sf to ensure correct projection
+  coord_sf(xlim = c(6.5, 18.5), ylim = c(36, 47.5))
+
+map_plot
+```
+
+

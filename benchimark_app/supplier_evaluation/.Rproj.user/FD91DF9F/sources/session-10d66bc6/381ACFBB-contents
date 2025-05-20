@@ -1,0 +1,647 @@
+---
+title: "Event Evaluation Report"
+format: 
+  typst:
+    template-partials:
+      - typst-show.typ
+      - typst-template.typ
+execute: 
+  echo: false
+params:
+  location: '`r params$location`'
+  expo_name: '`r params$expo_name`'
+  year: '`r params$year`' 
+  expo_name_year: '`r params$expo_name_year`'
+  value_score: '`r params$value_score`'
+  conversion_dm: '`r params$conversion_dm`'
+  conversion_meeting: '`r params$conversion_meeting`'
+  conversion_nc: '`r params$conversion_nc`'
+  conversion_nc_dm: '`r params$conversion_nc_dm`'
+  cost_lead: '`r params$cost_lead`'
+  cost_nc: '`r params$cost_nc`'
+  cost_meeting: '`r params$cost_meeting`'
+  relevance_category: '`r params$relevance_category`'
+  value_cost: '`r params$value_cost`'
+  effectiveness: '`r params$effectiveness`'
+  relevance_performance: '`r params$relevance_performance`'
+  about_expo: '`r params$about_expo`'
+  purpose: '`r params$purpose`'
+  conclusion: '`r params$conclusion`'
+  notes: '`r params$notes`'
+  competitors: '`r params$competitors`'
+  df_all: NULL
+  df_selected: NULL
+---
+
+
+```{r}
+# library
+library(dplyr)
+library(readr)
+library(tidyr)
+library(flextable)
+library(tidyverse)
+library(ggrepel)
+library(ggplot2)
+library(GGally)
+library(ggmap)
+library(scales)
+library(extrafont)
+library(viridis)
+library(patchwork)
+library(hrbrthemes)
+library(fmsb)
+library(colormap)
+```
+
+
+# Database
+```{r}
+# df_all <- readRDS(file = "expo_data.rds")
+df <- readRDS(params$df_selected)
+df_all <- readRDS(params$df_all)
+```
+
+
+
+# Funnel Bar
+```{r}
+#| label: funnel bar chart
+
+# visitor funnel chart
+data <- df
+
+# %>%
+#   filter(
+#     expo_name == "`r params$expo_name`",
+#     year == '`r params$year`'
+#     )
+
+# Create funnel data - order stages logically from highest to lowest number
+funnel_data <- data.frame(
+  stage = c("Booth Visitors", "New Connections", "Meetings", "Decision Makers"),
+  value = c(data$booth_visitors, data$new_connections, data$meetings, data$decision_makers)
+)
+
+# Set the order of the stages for proper funnel visualization
+funnel_data$stage <- factor(funnel_data$stage,
+  levels = c("Booth Visitors", "Meetings", "New Connections", "Decision Makers")
+)
+# Create the bar chart
+
+bar_leads <-
+  ggplot(funnel_data, aes(x = stage, y = value)) +
+  geom_bar(stat = "identity", fill = "#61A60E", width = 0.7) +
+  geom_text(aes(label = value), fontface = "bold", family = "Verdana", color = "#61A60E", vjust = -0.5) +
+  labs(x = "", y = "") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(hjust = 0.5, size = 12, color = "#B2B2B2"),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "#B2B2B2", linewidth = 1),
+    panel.border = element_blank(),
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0)
+  ) +
+  scale_y_continuous(
+    limits = c(0, max(funnel_data$value) * 1.2),
+    breaks = c(0)
+  ) + # Only include the 0 break for y-axis
+  scale_x_discrete(labels = function(x) {
+    lapply(x, function(y) gsub(" ", "\n", y))
+  })
+
+ggsave(
+  filename = "assets/bar_leads.png",
+  plot = bar_leads,
+  width = 8, # Width in inches
+  height = 3, # Height in inches
+  dpi = 150, # Resolution (dots per inch)
+  create.dir = FALSE
+)
+bar_leads
+```
+
+
+# ROI quadrat
+```{r}
+#| label: ROI Quadrat
+
+# Create the meeting_cost variable correctly
+all_expos <- df_all %>%
+  mutate(
+    meeting_cost = round(cost / meetings, 2),
+    roi_label = paste0(expo_name, "-", year, "\nCost: €", meeting_cost, "\nScore:", value_score)
+  )
+
+# Add flag for selected expo and year
+all_expos <- all_expos %>%
+  mutate(is_selected = (expo_name == data$expo_name[1] & year == data$year[1]))
+
+# Calculate medians based on the new meeting_cost variable
+median_meeting_cost <- median(all_expos$meeting_cost)
+median_value <- median(all_expos$value_score)
+
+# Recalculate quadrants using meeting_cost instead of cost
+all_expos <- all_expos %>%
+  mutate(quadrant = case_when(
+    meeting_cost <= median_meeting_cost & value_score >= median_value ~ "High Value / Low Cost",
+    meeting_cost > median_meeting_cost & value_score >= median_value ~ "High Value / High Cost",
+    meeting_cost <= median_meeting_cost & value_score < median_value ~ "Low Value / Low Cost",
+    meeting_cost > median_meeting_cost & value_score < median_value ~ "Low Value / High Cost"
+  ))
+
+# Create the executive style plot
+exec_quadrat <- ggplot(all_expos, aes(x = meeting_cost, y = value_score)) +
+  # Add reference lines
+  geom_hline(
+    yintercept = median_value,
+    linetype = "longdash", color = "gray85", linewidth = 0.7
+  ) +
+  geom_vline(
+    xintercept = median_meeting_cost,
+    linetype = "longdash", color = "gray85", linewidth = 0.7
+  ) +
+
+  # Add points with gray fill for all non-selected points
+  geom_point(aes(size = decision_makers),
+    shape = 21,
+    fill = "gray70", # All bubbles gray
+    color = "white",
+    stroke = 1.5,
+    alpha = 0.8
+  ) +
+
+  # Highlight selected points with green fill
+  geom_point(
+    data = filter(all_expos, is_selected),
+    aes(size = decision_makers),
+    fill = "#61A60E", # Green for selected
+    color = "white",
+    shape = 21,
+    stroke = 1.5,
+    alpha = 1
+  ) +
+
+  # Add labels for selected points
+  geom_text_repel(
+    data = filter(all_expos, is_selected),
+    aes(label = roi_label),
+    size = 5,
+    color = "#61A60E",
+    fontface = "bold",
+    bg.color = "white",
+    bg.r = 0.15,
+    box.padding = 0.8,
+    point.padding = 0.5,
+    segment.size = 0.7,
+    segment.color = "#61A60E",
+    hjust = 0 # Left-align the text
+  ) +
+  scale_size_continuous(range = c(4, 12), guide = "none") +
+
+  # Add quadrant labels
+  annotate("text",
+    x = min(all_expos$meeting_cost) + (median_meeting_cost - min(all_expos$meeting_cost)) / 2,
+    y = max(all_expos$value_score) - (max(all_expos$value_score) - median_value) / 6,
+    label = "HIGH VALUE\nLOW COST",
+    fontface = "bold",
+    color = "#b6d7a8",
+    alpha = 0.6, # More transparent
+    size = 5,
+    vjust = 1,
+    hjust = 0.5
+  ) +
+  annotate("text",
+    x = median_meeting_cost + (max(all_expos$meeting_cost) - median_meeting_cost) / 2,
+    y = max(all_expos$value_score) - (max(all_expos$value_score) - median_value) / 6,
+    label = "HIGH VALUE\nHIGH COST",
+    fontface = "bold",
+    color = "#a2c4c9",
+    alpha = 0.6, # More transparent
+    size = 5,
+    vjust = 1,
+    hjust = 0.5
+  ) +
+  annotate("text",
+    x = min(all_expos$meeting_cost) + (median_meeting_cost - min(all_expos$meeting_cost)) / 2,
+    y = min(all_expos$value_score) + (median_value - min(all_expos$value_score)) / 6,
+    label = "LOW VALUE\nLOW COST",
+    fontface = "bold",
+    color = "#f9cb9c",
+    alpha = 0.6, # More transparent
+    size = 5,
+    hjust = 0.5
+  ) +
+  annotate("text",
+    x = median_meeting_cost + (max(all_expos$meeting_cost) - median_meeting_cost) / 2,
+    y = min(all_expos$value_score) + (median_value - min(all_expos$value_score)) / 6,
+    label = "LOW VALUE\nHIGH COST",
+    fontface = "bold",
+    color = "#ea9999",
+    alpha = 0.6, # More transparent
+    size = 5,
+    hjust = 0.5
+  ) +
+  scale_x_continuous(expand = c(0.1, 0), labels = scales::label_currency(prefix = "€")) +
+  # Axis labels
+  labs(
+    x = "COST PER MEETING",
+    y = "VALUE SCORE"
+  ) +
+
+  # Executive dashboard theme
+  theme_minimal() +
+  theme(
+    text = element_text(family = "sans"),
+    axis.title = element_blank(), # element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "none",
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0)
+  )
+
+exec_quadrat
+ggsave(
+  filename = "assets/quadrat_plot.png",
+  plot = exec_quadrat,
+  width = 8, # Width in inches
+  height = 3, # Height in inches
+  dpi = 150 # Resolution (dots per inch)
+)
+```
+
+
+
+# Flipped Bar
+```{r}
+# Select metrics to include in the chart
+bar_metrics <- c(
+  "value_score", "relevance", "booth_visitors"
+)
+
+# CORRECTED: Function to normalize values to 0-100 scale with absolute scaling
+# This approach uses the known or theoretical min/max values for each metric
+# rather than scaling relative to the data
+normalize_absolute <- function(x, min_val = NULL, max_val = NULL) {
+  # If min/max not provided, use the minimum 0 and either maximum value in data or a default max
+  if (is.null(min_val)) min_val <- 0
+  if (is.null(max_val)) max_val <- max(max(x, na.rm = TRUE), 1) # avoid division by zero
+  
+  # Return original value if max equals min
+  if (max_val == min_val) {
+    return(x)
+  }
+  
+  # Scale the values between 0-100
+  normalized <- 100 * (x - min_val) / (max_val - min_val)
+  
+  # Ensure values stay within 0-100 range (for values outside the expected range)
+  normalized <- pmax(0, pmin(100, normalized))
+  
+  return(normalized)
+}
+
+# Create normalized data for bar chart with absolute scaling
+bar_data <- df_all
+
+# Define normalization parameters for each metric
+# Specify the expected min and max values for each metric
+normalization_params <- list(
+  value_score = list(min = 0, max = 100),      # Assuming value_score is on a 0-100 scale
+  relevance = list(min = 0, max = 10)          # Assuming relevance is on a 0-10 scale
+)
+
+# Apply normalization with specific parameters for each metric
+for (metric in bar_metrics) {
+  # Skip booth_visitors as it's not directly normalized
+  if (metric != "booth_visitors") {
+    bar_data[[paste0(metric, "_normalized")]] <- normalize_absolute(
+      bar_data[[metric]],
+      min_val = normalization_params[[metric]]$min,
+      max_val = normalization_params[[metric]]$max
+    )
+  }
+}
+
+# Calculate conversion rates and normalize them to 0-100 scale
+bar_data <- bar_data %>%
+  # Calculate conversion rates as percentages (0-100%)
+  
+  # Calculate conversion_rate_meetings (% of booth visitors that become meetings)
+  mutate(conversion_rate_meetings = ifelse(booth_visitors > 0,
+                                           100 * meetings / booth_visitors,
+                                           0
+  )) %>%
+  
+  # Calculate conversion_rate_decision_makers (% of booth visitors that engage with decision makers)
+  mutate(conversion_rate_decision_makers = ifelse(booth_visitors > 0,
+                                                  100 * decision_makers / booth_visitors,
+                                                  0
+  )) %>%
+  
+  # Calculate conversion_new_connections (% of booth visitors that become new connections)
+  mutate(conversion_new_connections = ifelse(booth_visitors > 0,
+                                             100 * new_connections / booth_visitors,
+                                             0
+  )) %>%
+  
+  # Now normalize these conversion rates using the normalize_absolute function
+  # with specific target ranges for each conversion metric
+  mutate(
+    # For meetings, typically 5-10% conversion is good, so scale accordingly
+    conversion_rate_meetings_normalized = normalize_absolute(
+      conversion_rate_meetings, 
+      min_val = 0, 
+      max_val = 25  # Assuming 25% conversion rate is excellent and would score 100
+    ),
+    
+    # For decision makers, typically 2-5% conversion is good
+    conversion_rate_decision_makers_normalized = normalize_absolute(
+      conversion_rate_decision_makers, 
+      min_val = 0, 
+      max_val = 15  # Assuming 15% conversion rate is excellent and would score 100
+    ),
+    
+    # For new connections, similar scaling
+    conversion_new_connections_normalized = normalize_absolute(
+      conversion_new_connections, 
+      min_val = 0, 
+      max_val = 20  # Assuming 20% conversion rate is excellent and would score 100
+    )
+  )
+
+# Final normalized metrics to use
+final_bar_metrics <- c(
+  "value_score_normalized", 
+  "relevance_normalized", 
+  "conversion_rate_meetings_normalized", 
+  "conversion_rate_decision_makers_normalized",
+  "conversion_new_connections_normalized"
+)
+
+# Filter for selected expo and year (assuming first row is selected)
+selected_bar_data <- bar_data %>%
+  filter(expo_name == df_all$expo_name[1] & year == df_all$year[1]) %>%
+  select(expo_name, year, all_of(final_bar_metrics))
+
+# Reshape for bar chart
+bar_long <- selected_bar_data %>%
+  pivot_longer(
+    cols = -c(expo_name, year),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  # Rename metrics for better labels
+  mutate(metric = case_when(
+    metric == "value_score_normalized" ~ "Overall Value",
+    metric == "relevance_normalized" ~ "Industry Relevance",
+    metric == "conversion_rate_meetings_normalized" ~ "Meeting Conversion",
+    metric == "conversion_rate_decision_makers_normalized" ~ "Decision Maker Conversion",
+    metric == "conversion_new_connections_normalized" ~ "New Connection Conversion",
+    TRUE ~ metric
+  ))
+
+# Create a dataframe for category averages (for comparison)
+# Calculate averages using the same absolute scaling
+category_averages <- bar_data %>%
+  summarize(across(all_of(final_bar_metrics), mean, na.rm = TRUE)) %>%
+  # Reshape
+  pivot_longer(
+    cols = everything(),
+    names_to = "metric",
+    values_to = "average"
+  ) %>%
+  # Rename metrics for better labels
+  mutate(metric = case_when(
+    metric == "value_score_normalized" ~ "Overall Value",
+    metric == "relevance_normalized" ~ "Industry Relevance",
+    metric == "conversion_rate_meetings_normalized" ~ "Meeting Conversion",
+    metric == "conversion_rate_decision_makers_normalized" ~ "Decision Maker Conversion",
+    metric == "conversion_new_connections_normalized" ~ "New Connection Conversion",
+    TRUE ~ metric
+  ))
+
+# Join the averages to the main data
+bar_long <- bar_long %>%
+  left_join(category_averages, by = "metric")
+
+# Define a custom order for the metrics
+bar_long$metric <- factor(bar_long$metric,
+                          levels = c(
+                            "Overall Value", "Industry Relevance",
+                            "Meeting Conversion", "Decision Maker Conversion",
+                            "New Connection Conversion"
+                          )
+)
+
+# Create horizontal bar chart
+bar_plot <- ggplot(bar_long, aes(x = metric, y = value)) +
+  # Add bars
+  geom_bar(stat = "identity", fill = "#61A60E", width = 0.6, alpha = 0.8) +
+  
+  # Add average line
+  geom_point(aes(y = average), color = "#B2B2B2", size = 3) +
+  geom_segment(
+    aes(
+      x = as.numeric(metric) - 0.4, xend = as.numeric(metric) + 0.4,
+      y = average, yend = average
+    ),
+    color = "#B2B2B2", linewidth = 1.2, linetype = "dashed"
+  ) +
+  
+  # Add value labels
+  geom_text(aes(label = round(value)), colour = "#61A60E", hjust = -0.3, size = 4, fontface = "bold") +
+  
+  # Add axis labels and title
+  labs(
+    x = "",
+    y = "Performance (0-100 Scale)"
+  ) +
+  
+  # Flip coordinates for horizontal bars
+  coord_flip() +
+  
+  # Set y-axis limits
+  scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 25)) +
+  
+  # Apply clean theme
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 10),
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12, margin = margin(b = 15)),
+    plot.caption = element_text(size = 9, color = "gray50", hjust = 0),
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0)
+  )
+
+# Save the plot with correct dimensions
+ggsave(
+  filename = "assets/expo_effectiveness_bar.png",
+  plot = bar_plot,
+  width = 8,
+  height = 3,
+  dpi = 150
+)
+```
+
+
+# Industry relevance vs. Value score
+```{r}
+# Add year to expo name for labels
+all_expos <- all_expos %>%
+  mutate(rel_label = paste0(expo_name, " - ", year, "\nScore:", value_score, "\nRelevancy:", relevance))
+
+
+
+# Calculate medians based on the new relevance variable
+median_relevance <- 5 # Relevance score is 1 - 10.
+median_value <- median(all_expos$value_score)
+
+# Recalculate quadrants using relevance instead of cost
+all_expos <- all_expos %>%
+  mutate(quadrant = case_when(
+    relevance <= median_relevance & value_score >= median_value ~ "Hidden Opportunity",
+    relevance > median_relevance & value_score >= median_value ~ "Strategic Priority",
+    relevance <= median_relevance & value_score < median_value ~ "Resource Drain",
+    relevance > median_relevance & value_score < median_value ~ "Industry-Focused"
+  ))
+
+
+# Create scatter plot
+relevance_score_plot <-
+  ggplot(all_expos, aes(x = relevance, y = value_score)) +
+
+  # Add reference lines
+  geom_hline(
+    yintercept = median_value,
+    linetype = "longdash", color = "gray85", linewidth = 0.7
+  ) +
+  geom_vline(
+    xintercept = median_relevance,
+    linetype = "longdash", color = "gray85", linewidth = 0.7
+  ) +
+
+  # Add points with gray fill for all non-selected points
+  geom_point(aes(size = decision_makers),
+    shape = 21,
+    fill = "gray70", # All bubbles gray
+    color = "white",
+    stroke = 1.5,
+    alpha = 0.8
+  ) +
+  # Highlight selected points with green fill
+  geom_point(
+    data = filter(all_expos, is_selected),
+    aes(size = decision_makers),
+    fill = "#61A60E", # Green for selected
+    color = "white",
+    shape = 21,
+    stroke = 1.5,
+    alpha = 1
+  ) +
+
+
+  # Add trend line
+  geom_smooth(method = "lm", se = FALSE, color = "darkgray", linetype = "dashed") +
+
+
+  # Add labels for selected points
+  geom_text_repel(
+    data = filter(all_expos, is_selected),
+    aes(label = ifelse(is_selected, rel_label, "")),
+    size = 5,
+    color = "#61A60E",
+    fontface = "bold",
+    bg.color = "white",
+    bg.r = 0.15,
+    box.padding = 0.8,
+    point.padding = 0.5,
+    segment.size = 0.7,
+    segment.color = "#61A60E",
+    hjust = 0 # Left-align the text
+  ) +
+
+  # Add quadrant labels
+  annotate("text",
+    x = min(all_expos$relevance) + (median_relevance - min(all_expos$relevance)) / 2,
+    y = max(all_expos$value_score) - (max(all_expos$value_score) - median_value) / 6,
+    label = "Hidden Opportunity",
+    fontface = "bold",
+    color = "#b6d7a8",
+    alpha = 0.6, # More transparent
+    size = 5,
+    vjust = 1,
+    hjust = 0.5
+  ) +
+  annotate("text",
+    x = median_relevance + (max(all_expos$relevance) - median_relevance) / 2,
+    y = max(all_expos$value_score) - (max(all_expos$value_score) - median_value) / 6,
+    label = "Strategic Priority",
+    fontface = "bold",
+    color = "#a2c4c9",
+    alpha = 0.6, # More transparent
+    size = 5,
+    vjust = 1,
+    hjust = 0.5
+  ) +
+  annotate("text",
+    x = min(all_expos$relevance) + (median_relevance - min(all_expos$relevance)) / 2,
+    y = min(all_expos$value_score) + (median_value - min(all_expos$value_score)) / 6,
+    label = "Resource Drain",
+    fontface = "bold",
+    color = "#ea9999",
+    alpha = 0.6, # More transparent
+    size = 5,
+    hjust = 0.5
+  ) +
+  annotate("text",
+    x = median_relevance + (max(all_expos$relevance) - median_relevance) / 2,
+    y = min(all_expos$value_score) + (median_value - min(all_expos$value_score)) / 6,
+    label = "Industry-Focused",
+    fontface = "bold",
+    color = "#f9cb9c",
+    alpha = 0.6, # More transparent
+    size = 5,
+    hjust = 0.5
+  ) +
+
+  # Customize legend and scales
+  scale_alpha_manual(values = setNames(c(1, 0.5), c(TRUE, FALSE)), guide = "none") +
+
+  # Add theme and labels
+  labs(
+    x = "Industry Relevance Score", y = "Value Score", 
+    # title = "Industry Relevance vs. expo Value",
+    # subtitle = "Bubble size indicates number of decision maker contacts"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Verdana"),
+    axis.title = element_blank(), #element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "none",
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.background = element_rect(fill = "#FAFAFA", color = NA),
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0)
+  )
+
+relevance_score_plot
+
+ggsave(
+  filename = "assets/relevance_score_plot.png",
+  plot = relevance_score_plot,
+  width = 8, # Width in inches
+  height = 3, # Height in inches
+  dpi = 150 # Resolution (dots per inch)
+)
+```

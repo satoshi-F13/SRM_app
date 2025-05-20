@@ -1,0 +1,111 @@
+#let srm-report(
+  title: "title",
+  company: none,
+  distance: none,
+  total_sup: none,
+  ranking: none,
+  tech_level: none,
+  score: none,
+  category: none,
+  body,
+) = {
+  set text(
+    font: "Verdana",
+    size: 10.5pt,
+  )
+  set page(
+    "a4",
+    margin: (left: 1in, right: 1in, top: 0.7in, bottom: 1in),
+    background: place(top, 
+                    rect(fill: rgb("#61A60E"),
+                    width: 100%,
+                    height: 0.5in)),
+    header: align(
+      horizon,
+      grid(
+        columns: (80%, 20%),
+        align(left,
+              text(size: 20pt,
+              fill: white,
+              weight: "bold",
+              title)),
+        align(right,
+              text(size: 12pt,
+              fill: white,
+              weight: "bold",
+              company)),
+      ),
+    ),
+    footer: align(
+      grid(
+        columns: (40%, 60%),
+        align(horizon,
+              context {
+                text(fill: rgb("#A6AEBF"),
+                    size: 12pt,
+                    counter(page).display("1"))
+              }),
+        align(right,
+              image("sample_logo.png",
+                    height: 50%)),
+      )
+    )
+  )
+  
+  // Configure headings
+  show heading.where(level: 1): set block(below: 0.8em)
+  show heading.where(level: 1): underline
+  show heading.where(level: 2): set block(above: 0.5cm, below: 0.5cm)
+  
+  // Paragraphs
+  set par(
+    justify: false,
+    linebreaks: "optimized"
+  )  
+  
+  // Define a style for links
+  show link: set text(fill: rgb("#800080"))
+  
+  // Custom table styling 
+  show table: table => {
+    set table(
+      width: 100%,
+      inset: 8pt,
+      stroke: (width: 1pt, color: rgba(255, 255, 255, 0.1))
+    )
+    table
+  }
+  
+  // Section header style 
+  show heading.where(level: 3): it => {
+    set text(fill: rgb("#76b852"), size: 1.5em)
+    set block(above: 30pt, below: 15pt)
+    it
+  }
+  
+  // Create a function for key-value metrics
+ let key-value-metric(value, key) = {
+  box(
+    width: 100%,
+    fill: rgb("#f9f9f9"),
+    radius: 5pt,
+    inset: 15pt,
+    [
+      #align(center)[
+        #text(size: 2.5em, fill: rgb("#76b852"), weight: "bold", value)
+        #block(height: 0.5em)
+        #text(size: 1.2em, fill: rgb("#B2B2B2"), key)
+
+      ]
+    ]
+  )
+}
+  
+  // Main content
+  body
+  
+ 
+  box(width: 1fr, line(length: 100%, stroke: luma(180)))
+  
+
+}

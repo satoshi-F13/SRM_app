@@ -1,0 +1,60 @@
+meta:
+  name: Chemical Company, Novara
+  links:
+    home: 
+logo:
+  images:
+    icon-color: logos/icon/sample_logo.png
+    wide-color: logos/wide/sample_logo.png
+    tall-color: logos/wide/sample_logo.png
+  small: icon-color
+  medium: wide-color
+  large: tall-color
+color:
+  palette:
+    green: "#61A60E"
+    brown: "#7C563A"
+    grey: "#B2B2B2"
+    blue: "#7AB8D7"
+    darkgreen: "#002900"
+    pink: "#B999AB"
+    lightblue: "#ADD2E7"
+    black: "#13261B"
+    white: "#FFFFFF"
+  foreground: black
+  background: white
+  primary: darkgreen
+  secondary: green
+  success: green
+  info: grey
+  warning: brown
+  danger: pink
+  light: lightblue
+  dark: darkgreen
+typography:
+  fonts:
+    - family: Arimo 
+      source: google
+  base:
+    family: Arimo
+    line-height: 1.6
+  headings:
+    family: Arimo 
+    weight: 600
+  link:
+    color: primary
+    decoration: underline
+  monospace:
+    family: Arimo
+    size: 1em
+defaults:
+  bootstrap:
+    defaults:
+      link-decoration: underline
+      navbar-fg: "#fff"
+  quarto:
+    format:
+      html:
+      revealjs:
+      typst:
+  shiny:

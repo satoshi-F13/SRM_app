@@ -1,0 +1,16 @@
+# Load all required packages
+options(HTTPUserAgent = "Mozilla/5.0")
+
+library(shiny)
+library(shinyjs)
+library(bslib)
+library(bsicons)
+library(DT)
+library(data.table)
+library(lubridate)
+library(shinyalert)
+library(plotly)
+library(readr)
+library(dplyr)
+library(ggmap)
+library(rsconnect)
